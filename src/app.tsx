@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useParams, useLocation, useNavigate, useOutletContext } from 'react-router-dom'
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import useSWR, { SWRConfig } from 'swr'
 import { useSettings, type Settings } from './hooks/use-settings'
@@ -7,6 +7,7 @@ import { fetcher } from './lib/fetcher'
 import { LocaleContext, APP_NAME, type Locale, useI18n } from './lib/i18n'
 import { MD_BREAKPOINT } from './lib/breakpoints'
 import { useIsTouchDevice } from './hooks/use-is-touch-device'
+import { saveScrollPosition, restoreScrollPosition } from './hooks/use-scroll-restoration'
 import { useSwipeDrawer } from './hooks/use-swipe-drawer'
 import { Header } from './components/layout/header'
 import { ArticleList, type ArticleListHandle } from './components/article/article-list'
@@ -198,6 +199,20 @@ function getPageType(pathname: string): 'detail' | 'list' {
   return 'detail'
 }
 
+/**
+ * Renders nothing. Lives inside the motion.div so it mounts/unmounts with it.
+ * useLayoutEffect restores scroll synchronously before the browser paints,
+ * meaning the fade-in animation already shows the page at the saved position.
+ */
+function ScrollRestore({ pathname, pageType }: { pathname: string; pageType: string }) {
+  useLayoutEffect(() => {
+    if (pageType === 'list') {
+      restoreScrollPosition(pathname)
+    }
+  }, [pathname, pageType])
+  return null
+}
+
 function AnimatedRoutes() {
   const location = useLocation()
   const isTouchDevice = useIsTouchDevice()
@@ -215,6 +230,15 @@ function AnimatedRoutes() {
   // Reset to PUSH after each render so link navigations get the slide
   const currentAction = navAction.current
   useEffect(() => { navAction.current = 'PUSH' })
+
+  // Save scroll position when navigating away from a page
+  const prevPathname = useRef(location.pathname)
+  useEffect(() => {
+    if (prevPathname.current !== location.pathname) {
+      saveScrollPosition(prevPathname.current)
+      prevPathname.current = location.pathname
+    }
+  }, [location.pathname])
 
   // Only slide-in on touch devices navigating forward to a detail page
   const isDetailSlide = isTouchDevice && pageType === 'detail' && currentAction === 'PUSH'
@@ -234,6 +258,7 @@ function AnimatedRoutes() {
         }
         style={{ minHeight: '100vh' }}
       >
+        <ScrollRestore pathname={location.pathname} pageType={pageType} />
         <Routes location={location}>
           <Route element={<AppLayout />}>
             <Route path="/" element={<HomePageWrapper />} />
