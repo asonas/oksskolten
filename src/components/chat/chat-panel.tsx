@@ -199,7 +199,7 @@ export function ChatPanel({ variant, chatState: externalChatState, articleId, co
   // Expanded overlay (inline variant only) — rendered via portal
   if (isInline && expanded) {
     const overlay = (
-      <div className="fixed inset-0 z-[80]">
+      <div className="fixed inset-0 z-[90]">
         {/* backdrop */}
         <div className="absolute inset-0 bg-overlay" onClick={() => setExpanded(false)} />
         {/* panel */}

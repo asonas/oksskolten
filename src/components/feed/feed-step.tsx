@@ -292,7 +292,7 @@ export function FeedStep({ onClose, onCreated, onFetchStarted, categories }: Fee
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
-          <SelectContent className="z-[70]">
+          <SelectContent>
             <SelectItem value="__none__">{t('category.uncategorized')}</SelectItem>
             {categories.map(cat => (
               <SelectItem key={cat.id} value={String(cat.id)}>{cat.name}</SelectItem>
