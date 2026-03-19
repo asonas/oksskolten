@@ -64,51 +64,53 @@ Issues:
 | AI chat tools | Via search results | No — dynamically computed |
 | Smart Floor | Not used | No |
 
-## Approach: Replace 5-Minute Cron Batch with Daily Decay Batch
+## Approach: Decouple Score Recalculation from Feed Fetch
 
-Since event-driven updates already handle engagement changes instantly, the cron batch's role is reduced to daily time-decay refresh only.
+Separate score recalculation into its own cron with a configurable schedule (`SCORE_RECALC_SCHEDULE`). Add Meilisearch sync after each recalculation. The default frequency stays at 5 minutes for safety; deployments confident in event-driven coverage can reduce to daily.
 
 ### Changes
 
 1. `server/index.ts`: Remove the `recalculateScores()` call from the feed-fetch cron (`CRON_SCHEDULE`)
-2. `server/index.ts`: Add a new daily cron job that runs `recalculateScores()` on a daily schedule
-3. After the daily batch completes, bulk-sync updated article scores to the Meilisearch index
+2. `server/index.ts`: Add a separate cron job that runs `recalculateScores()` on a configurable schedule
+3. After each recalculation, bulk-sync updated article scores to the Meilisearch index
 4. Do not change the `recalculateScores()` WHERE clause (use existing logic as-is)
 
-### Daily Batch Schedule
+### Schedule
 
-- Default: `0 3 * * *` (daily at 3:00 AM)
+- Default: `*/5 * * * *` (every 5 minutes, same as the original frequency)
 - Configurable via the `SCORE_RECALC_SCHEDULE` environment variable
+- For deployments where event-driven updates cover all engagement actions, set to e.g. `0 3 * * *` (daily) to reduce CPU cost
 - Document the default in `.env.example`
 
 ### Meilisearch Bulk Sync
 
-After the daily batch completes, fetch articles matching the same WHERE clause as `recalculateScores()` and bulk-sync their scores to Meilisearch. `recalculateScores()` itself is not modified; a separate sync function is added.
+After each recalculation, fetch articles matching the same WHERE clause as `recalculateScores()` and bulk-sync their scores to Meilisearch. `recalculateScores()` itself is not modified; a separate sync function is added.
 
 ```typescript
 // Daily batch flow
 const { updated } = recalculateScores()
 if (updated > 0) {
-  syncAllScoredArticlesToSearch()
+  await syncAllScoredArticlesToSearch()
 }
 ```
 
-`syncAllScoredArticlesToSearch()` is added to `server/search/sync.ts`. It queries `id, score` using the same WHERE clause as the batch and performs a partial document update in Meilisearch. Since it runs once daily, performance impact is minimal.
+`syncAllScoredArticlesToSearch()` is added to `server/search/sync.ts`. It queries `id, score` using the shared `SCORED_ARTICLES_WHERE` constant (exported from `server/db/articles.ts`) and performs batched partial document updates in Meilisearch (batch size 1000, matching `rebuildSearchIndex()`). The function is async and awaits each Meilisearch call to ensure sync completion before logging success. It skips execution if an index rebuild is in progress (the rebuild will include fresh scores).
 
 ### Key Files
 
 | File | Description |
 |---|---|
-| `server/index.ts` | Cron schedule changes |
-| `server/search/sync.ts` | `syncAllScoredArticlesToSearch()` function |
-| `.env.example` | `SCORE_RECALC_SCHEDULE` documentation |
+| `server/index.ts` | Cron schedule: removed `recalculateScores()` from feed-fetch, added separate score recalculation cron |
+| `server/search/sync.ts` | `syncAllScoredArticlesToSearch()` — batched Meilisearch score sync |
+| `server/db/articles.ts` | `SCORED_ARTICLES_WHERE` constant shared between recalculation and sync |
+| `.env.example` | `SCORE_RECALC_SCHEDULE` environment variable documentation |
 
 ### Logging
 
 Follow existing log format at `info` level:
 
 ```
-[cron] Daily score recalc: 142 articles updated
+[cron] Scores recalculated: 142 articles
 [cron] Score sync to search: 142 articles
 ```
 
@@ -122,7 +124,7 @@ Follow existing log format at `info` level:
 This spec is limited to:
 
 - Removing `recalculateScores()` from the feed-fetch cron
-- Adding a daily batch cron
+- Adding a separate score recalculation cron
 - Adding the Meilisearch bulk sync function
 
 Out of scope:
@@ -132,18 +134,18 @@ Out of scope:
 
 ### Error Handling
 
-Follow existing cron error handling: try-catch with `log.error`. No retries (the next daily batch will re-run automatically). If `recalculateScores()` errors, skip the Meilisearch sync.
+Follow existing cron error handling: try-catch with `log.error`. No retries (the next scheduled run will re-execute automatically). If `recalculateScores()` errors, skip the Meilisearch sync.
 
 ```typescript
 try {
   const { updated } = recalculateScores()
-  log.info(`[cron] Daily score recalc: ${updated} articles updated`)
+  log.info(`[cron] Scores recalculated: ${updated} articles`)
   if (updated > 0) {
-    syncAllScoredArticlesToSearch()
-    log.info(`[cron] Score sync to search: ${updated} articles`)
+    const synced = await syncAllScoredArticlesToSearch()
+    log.info(`[cron] Score sync to search: ${synced} articles`)
   }
 } catch (err) {
-  log.error('[cron] Daily score recalc error:', err)
+  log.error('[cron] Score recalculation error:', err)
 }
 ```
 
@@ -153,13 +155,11 @@ No mutex is needed between the daily batch and the feed-fetch cron. SQLite's WAL
 
 ### Migration
 
-No schema changes required. Deploy the code change only. After deployment, the next feed-fetch cron cycle will no longer run `recalculateScores()`, and the daily batch will first execute at the configured schedule time.
+No schema changes required. Deploy the code change only. After deployment, the feed-fetch cron no longer runs `recalculateScores()`, and the separate score recalculation cron takes over at the configured schedule.
 
 ## Expected Impact
 
-- Recalculation frequency reduced from every 5 minutes (288×/day) to once daily
-- CPU cost reduced by ~1/288
-- Score immediacy is maintained by event-driven updates
-- Time decay refresh is delayed by up to 24 hours, which is acceptable for an RSS reader (decay factor 0.05 means daily drift is negligible)
-- Meilisearch scores are refreshed daily
-
+- Score recalculation is decoupled from feed fetching, allowing independent schedule tuning
+- Default frequency unchanged (5 minutes); can be reduced to daily via `SCORE_RECALC_SCHEDULE=0 3 * * *` for ~288x CPU reduction
+- Meilisearch scores are synced after each recalculation (previously only during 6-hourly index rebuild)
+- `SCORED_ARTICLES_WHERE` constant eliminates duplicated WHERE clause across files
