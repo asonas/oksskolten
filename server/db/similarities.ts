@@ -33,7 +33,7 @@ export function getSimilarArticles(articleId: number): SimilarArticle[] {
     .prepare(
       `SELECT a.id, f.name AS feed_name, a.title, a.url, a.published_at, a.read_at, s.score
        FROM article_similarities s
-       JOIN articles a ON a.id = s.similar_to_id
+       JOIN active_articles a ON a.id = s.similar_to_id
        JOIN feeds f ON f.id = a.feed_id
        WHERE s.article_id = ?
        ORDER BY s.score DESC`,
@@ -50,7 +50,7 @@ export function findReadSimilarArticle(articleId: number): number | null {
     .prepare(
       `SELECT a.id
        FROM article_similarities s
-       JOIN articles a ON a.id = s.similar_to_id
+       JOIN active_articles a ON a.id = s.similar_to_id
        WHERE s.article_id = ? AND a.read_at IS NOT NULL
        LIMIT 1`,
     )

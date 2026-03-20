@@ -50,7 +50,7 @@ export function getConversations(opts?: {
            (SELECT content FROM chat_messages m WHERE m.conversation_id = c.id AND m.role = 'user' ORDER BY m.id ASC LIMIT 1) AS first_user_message,
            (SELECT content FROM chat_messages m WHERE m.conversation_id = c.id AND m.role = 'assistant' AND content LIKE '%"type":"text"%' ORDER BY m.id ASC LIMIT 1) AS first_assistant_preview
     FROM conversations c
-    LEFT JOIN articles a ON c.article_id = a.id
+    LEFT JOIN active_articles a ON c.article_id = a.id
     ${where}
     ORDER BY c.updated_at DESC
     LIMIT ${Number(limit)}

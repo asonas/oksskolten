@@ -1,7 +1,7 @@
 import { getDb, runNamed } from './connection.js'
 import type { Feed, FeedWithCounts } from './types.js'
 import type { MeiliArticleDoc } from '../search/client.js'
-import { deleteArticlesByFeedFromSearch, syncArticlesByFeedToSearch } from '../search/sync.js'
+import { deleteArticlesFromSearch, syncArticlesByFeedToSearch } from '../search/sync.js'
 
 export function getFeeds(): FeedWithCounts[] {
   return getDb().prepare(`
@@ -18,7 +18,7 @@ export function getFeeds(): FeedWithCounts[] {
         SUM(CASE WHEN seen_at IS NULL THEN 1 ELSE 0 END) AS unread_count,
         COUNT(CASE WHEN COALESCE(published_at, fetched_at) >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-28 days') THEN 1 END) / 4.0 AS articles_per_week,
         MAX(COALESCE(published_at, fetched_at)) AS latest_published_at
-      FROM articles GROUP BY feed_id
+      FROM active_articles GROUP BY feed_id
     ) ac ON f.id = ac.feed_id
     ORDER BY f.name COLLATE NOCASE
   `).all() as FeedWithCounts[]
@@ -27,7 +27,7 @@ export function getFeeds(): FeedWithCounts[] {
 export function getFeedMetrics(feedId: number): { avg_content_length: number | null } | undefined {
   return getDb().prepare(`
     SELECT AVG(LENGTH(full_text)) AS avg_content_length
-    FROM articles
+    FROM active_articles
     WHERE feed_id = ? AND full_text IS NOT NULL
   `).get(feedId) as { avg_content_length: number | null } | undefined
 }
@@ -150,7 +150,7 @@ export function updateFeed(
              (seen_at IS NULL) AS is_unread,
              (liked_at IS NOT NULL) AS is_liked,
              (bookmarked_at IS NOT NULL) AS is_bookmarked
-      FROM articles WHERE feed_id = ?
+      FROM active_articles WHERE feed_id = ?
     `).all(id) as MeiliArticleDoc[]
     syncArticlesByFeedToSearch(docs)
   }
@@ -177,7 +177,7 @@ export function bulkMoveFeedsToCategory(feedIds: number[], categoryId: number | 
            (seen_at IS NULL) AS is_unread,
            (liked_at IS NOT NULL) AS is_liked,
            (bookmarked_at IS NOT NULL) AS is_bookmarked
-    FROM articles WHERE feed_id IN (${placeholders})
+    FROM active_articles WHERE feed_id IN (${placeholders})
   `).all(...feedIds) as MeiliArticleDoc[]
   syncArticlesByFeedToSearch(allDocs)
 }
@@ -190,7 +190,7 @@ export function deleteFeed(id: number): boolean {
     return { articleIds: ids, deleted: result.changes > 0 }
   })()
   if (deleted && articleIds.length > 0) {
-    deleteArticlesByFeedFromSearch(articleIds)
+    deleteArticlesFromSearch(articleIds)
   }
   return deleted
 }

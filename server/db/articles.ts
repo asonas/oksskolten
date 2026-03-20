@@ -1,8 +1,12 @@
 import { getDb, runNamed, getNamed, allNamed } from './connection.js'
 import type { Article, ArticleListItem, ArticleDetail } from './types.js'
 import type { MeiliArticleDoc } from '../search/client.js'
-import { syncArticleToSearch, deleteArticleFromSearch, syncArticleScoreToSearch, syncArticleFiltersToSearch } from '../search/sync.js'
+import { syncArticleToSearch, deleteArticleFromSearch, deleteArticlesFromSearch, syncArticleScoreToSearch, syncArticleFiltersToSearch } from '../search/sync.js'
 import { RETRY_MAX_ATTEMPTS, RETRY_BATCH_LIMIT } from '../fetcher/util.js'
+import { deleteArticleImages } from '../fetcher/article-images.js'
+import { logger } from '../logger.js'
+
+const log = logger.child('retention')
 
 function buildMeiliDoc(id: number): MeiliArticleDoc | null {
   const row = getDb().prepare(`
@@ -71,7 +75,7 @@ export function updateScore(id: number): void {
 export function recalculateScores(): { updated: number } {
   const result = getDb().prepare(`
     UPDATE articles SET score = (${scoreExpr('')})
-    WHERE ${SCORED_ARTICLES_WHERE}
+    WHERE id IN (SELECT id FROM active_articles) AND ${SCORED_ARTICLES_WHERE}
   `).run()
   return { updated: result.changes }
 }
@@ -132,7 +136,7 @@ export function getArticles(opts: {
 
     // Candidate 2: SMART_FLOOR_MIN_ARTICLES-th newest article's date
     const top20Row = getNamed<{ floor: string | null }>(`
-      SELECT a.published_at AS floor FROM articles a
+      SELECT a.published_at AS floor FROM active_articles a
       ${scopeWhere}
       ORDER BY a.published_at DESC
       LIMIT 1 OFFSET ${SMART_FLOOR_MIN_ARTICLES - 1}
@@ -140,7 +144,7 @@ export function getArticles(opts: {
 
     // Candidate 3: oldest unread article's date
     const unreadRow = getNamed<{ floor: string | null }>(`
-      SELECT MIN(a.published_at) AS floor FROM articles a
+      SELECT MIN(a.published_at) AS floor FROM active_articles a
       ${scopeWhere ? scopeWhere + ' AND' : 'WHERE'} a.seen_at IS NULL AND a.published_at IS NOT NULL
     `, params)
 
@@ -173,12 +177,12 @@ export function getArticles(opts: {
     : opts.liked ? 'a.liked_at DESC' : opts.read ? 'a.read_at DESC' : 'a.published_at DESC'
 
   const totalRow = getNamed<{ cnt: number }>(`
-    SELECT COUNT(*) AS cnt FROM articles a ${where}
+    SELECT COUNT(*) AS cnt FROM active_articles a ${where}
   `, params)
   const total = totalRow.cnt
 
   const totalWithoutFloor = baseWhere != null
-    ? getNamed<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM articles a ${baseWhere}`, params).cnt
+    ? getNamed<{ cnt: number }>(`SELECT COUNT(*) AS cnt FROM active_articles a ${baseWhere}`, params).cnt
     : undefined
 
   const articles = allNamed<ArticleListItem>(`
@@ -186,7 +190,7 @@ export function getArticles(opts: {
            a.title, a.url, a.published_at, a.lang, a.summary, a.excerpt, a.og_image, a.seen_at, a.read_at, a.bookmarked_at, a.liked_at,
            a.score,
            (SELECT COUNT(*) FROM article_similarities WHERE article_id = a.id) AS similar_count
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     ${where}
     ORDER BY ${orderBy}
@@ -203,7 +207,7 @@ export function getArticleByUrl(url: string): ArticleDetail | undefined {
            a.full_text, a.full_text_translated, a.translated_lang, a.seen_at, a.read_at, a.bookmarked_at, a.liked_at,
            a.images_archived_at,
            (SELECT COUNT(*) FROM article_similarities WHERE article_id = a.id) AS similar_count
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     WHERE a.url = ?
   `).get(url) as ArticleDetail | undefined
@@ -216,7 +220,7 @@ export function getArticleById(id: number): ArticleDetail | undefined {
            a.full_text, a.full_text_translated, a.translated_lang, a.seen_at, a.read_at, a.bookmarked_at, a.liked_at,
            a.images_archived_at,
            (SELECT COUNT(*) FROM article_similarities WHERE article_id = a.id) AS similar_count
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     WHERE a.id = ?
   `).get(id) as ArticleDetail | undefined
@@ -256,9 +260,9 @@ export function markArticlesSeen(ids: number[]): { updated: number } {
 export function markAllSeenByFeed(feedId: number): { updated: number } {
   // Collect affected IDs before update for search sync
   const affectedIds = (getDb().prepare(
-    'SELECT id FROM articles WHERE feed_id = ? AND seen_at IS NULL',
+    'SELECT id FROM active_articles WHERE feed_id = ? AND seen_at IS NULL',
   ).all(feedId) as { id: number }[]).map(r => r.id)
-  const result = getDb().prepare("UPDATE articles SET seen_at = datetime('now') WHERE feed_id = ? AND seen_at IS NULL").run(feedId)
+  const result = getDb().prepare("UPDATE articles SET seen_at = datetime('now') WHERE feed_id = ? AND seen_at IS NULL AND purged_at IS NULL").run(feedId)
   if (affectedIds.length > 0) {
     syncArticleFiltersToSearch(affectedIds.map(id => ({ id, is_unread: false })))
   }
@@ -285,7 +289,7 @@ export function markArticleLiked(
 }
 
 export function getLikeCount(): number {
-  const row = getDb().prepare('SELECT COUNT(*) AS cnt FROM articles WHERE liked_at IS NOT NULL').get() as { cnt: number }
+  const row = getDb().prepare('SELECT COUNT(*) AS cnt FROM active_articles WHERE liked_at IS NOT NULL').get() as { cnt: number }
   return row.cnt
 }
 
@@ -309,7 +313,7 @@ export function markArticleBookmarked(
 }
 
 export function getBookmarkCount(): number {
-  const row = getDb().prepare('SELECT COUNT(*) AS cnt FROM articles WHERE bookmarked_at IS NOT NULL').get() as { cnt: number }
+  const row = getDb().prepare('SELECT COUNT(*) AS cnt FROM active_articles WHERE bookmarked_at IS NOT NULL').get() as { cnt: number }
   return row.cnt
 }
 
@@ -413,7 +417,7 @@ export function getRetryArticles(
   batchLimit = RETRY_BATCH_LIMIT,
 ): Article[] {
   return getDb().prepare(`
-    SELECT * FROM articles
+    SELECT * FROM active_articles
     WHERE last_error IS NOT NULL
       AND full_text IS NULL
       AND retry_count < :max_attempts
@@ -444,7 +448,7 @@ export function getRetryStats(maxAttempts = RETRY_MAX_ATTEMPTS): RetryStats {
         ${BACKOFF_DEADLINE} > datetime('now')
       THEN 1 ELSE 0 END) AS backoff_waiting,
       SUM(CASE WHEN retry_count >= :max_attempts THEN 1 ELSE 0 END) AS exceeded
-    FROM articles
+    FROM active_articles
     WHERE last_error IS NOT NULL AND full_text IS NULL
   `).get({ max_attempts: maxAttempts }) as { eligible: number | null; backoff_waiting: number | null; exceeded: number | null }
   return {
@@ -479,7 +483,7 @@ export function getArticlesByIds(
            a.title, a.url, a.published_at, a.lang, a.summary, a.excerpt,
            a.og_image, a.seen_at, a.read_at, a.bookmarked_at, a.liked_at,
            ${score} AS score
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     ${where}
     ORDER BY CASE a.id ${orderCase} END
@@ -554,7 +558,7 @@ export function searchArticles(opts: {
     SELECT a.id, a.feed_id, f.name AS feed_name,
            a.title, a.url, a.published_at, a.lang, a.summary, a.excerpt, a.og_image, a.seen_at, a.read_at, a.bookmarked_at, a.liked_at,
            ${score} AS score
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     ${where}
     ORDER BY ${orderBy}
@@ -599,7 +603,7 @@ export function getReadingStats(opts?: {
       COUNT(*) AS total,
       SUM(CASE WHEN a.seen_at IS NOT NULL THEN 1 ELSE 0 END) AS read,
       SUM(CASE WHEN a.seen_at IS NULL THEN 1 ELSE 0 END) AS unread
-    FROM articles a
+    FROM active_articles a
     ${where}
   `, params)
 
@@ -610,7 +614,7 @@ export function getReadingStats(opts?: {
       COUNT(*) AS total,
       SUM(CASE WHEN a.seen_at IS NOT NULL THEN 1 ELSE 0 END) AS read,
       SUM(CASE WHEN a.seen_at IS NULL THEN 1 ELSE 0 END) AS unread
-    FROM articles a
+    FROM active_articles a
     JOIN feeds f ON a.feed_id = f.id
     ${where}
     GROUP BY a.feed_id
@@ -618,4 +622,105 @@ export function getReadingStats(opts?: {
   `, params)
 
   return { ...totals, by_feed: byFeed }
+}
+
+// --- Retention policy ---
+
+export function getRetentionStats(readDays: number, unreadDays: number): { readEligible: number; unreadEligible: number } {
+  const readRow = getDb().prepare(`
+    SELECT COUNT(*) AS cnt FROM articles
+    WHERE purged_at IS NULL
+      AND feed_id NOT IN (SELECT id FROM feeds WHERE type = 'clip')
+      AND seen_at IS NOT NULL
+      AND seen_at < datetime('now', '-' || ? || ' days')
+      AND bookmarked_at IS NULL
+      AND liked_at IS NULL
+  `).get(readDays) as { cnt: number }
+
+  const unreadRow = getDb().prepare(`
+    SELECT COUNT(*) AS cnt FROM articles
+    WHERE purged_at IS NULL
+      AND feed_id NOT IN (SELECT id FROM feeds WHERE type = 'clip')
+      AND seen_at IS NULL
+      AND fetched_at < datetime('now', '-' || ? || ' days')
+      AND bookmarked_at IS NULL
+      AND liked_at IS NULL
+  `).get(unreadDays) as { cnt: number }
+
+  return { readEligible: readRow.cnt, unreadEligible: unreadRow.cnt }
+}
+
+export function purgeExpiredArticles(readDays: number, unreadDays: number): { purged: number } {
+  const db = getDb()
+
+  // Collect IDs to purge — use seen_at for read status (consistent with UI unread indicator)
+  const readIds = db.prepare(`
+    SELECT id FROM articles
+    WHERE purged_at IS NULL
+      AND feed_id NOT IN (SELECT id FROM feeds WHERE type = 'clip')
+      AND seen_at IS NOT NULL
+      AND seen_at < datetime('now', '-' || ? || ' days')
+      AND bookmarked_at IS NULL
+      AND liked_at IS NULL
+  `).all(readDays) as { id: number }[]
+
+  const unreadIds = db.prepare(`
+    SELECT id FROM articles
+    WHERE purged_at IS NULL
+      AND feed_id NOT IN (SELECT id FROM feeds WHERE type = 'clip')
+      AND seen_at IS NULL
+      AND fetched_at < datetime('now', '-' || ? || ' days')
+      AND bookmarked_at IS NULL
+      AND liked_at IS NULL
+  `).all(unreadDays) as { id: number }[]
+
+  const allIds = [...readIds, ...unreadIds].map(r => r.id)
+  if (allIds.length === 0) return { purged: 0 }
+
+  // Process in batches to avoid overly large SQL
+  const BATCH = 500
+  let purged = 0
+
+  for (let i = 0; i < allIds.length; i += BATCH) {
+    const batch = allIds.slice(i, i + BATCH)
+    const placeholders = batch.map(() => '?').join(',')
+
+    // Clean up archived images before the transaction (external I/O)
+    const articlesWithImages = db.prepare(
+      `SELECT id FROM articles WHERE id IN (${placeholders}) AND images_archived_at IS NOT NULL`,
+    ).all(...batch) as { id: number }[]
+
+    for (const { id } of articlesWithImages) {
+      try {
+        deleteArticleImages(id)
+      } catch (err) {
+        log.warn(`Failed to delete images for article ${id}:`, err)
+      }
+    }
+
+    // Soft delete + search index removal in a transaction to keep them consistent
+    const result = db.transaction(() => {
+      const res = db.prepare(`
+        UPDATE articles
+        SET full_text = NULL,
+            full_text_translated = NULL,
+            excerpt = NULL,
+            summary = NULL,
+            og_image = NULL,
+            images_archived_at = NULL,
+            last_error = NULL,
+            retry_count = 0,
+            purged_at = datetime('now')
+        WHERE id IN (${placeholders})
+      `).run(...batch)
+
+      deleteArticlesFromSearch(batch)
+
+      return res
+    })()
+
+    purged += result.changes
+  }
+
+  return { purged }
 }

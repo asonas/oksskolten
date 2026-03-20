@@ -7,7 +7,7 @@ import jwt from '@fastify/jwt'
 import rateLimit from '@fastify/rate-limit'
 import multipart from '@fastify/multipart'
 import cron, { type ScheduledTask } from 'node-cron'
-import { runMigrations, getSetting, upsertSetting, getOrCreateJwtSecret, ensureClipFeed, recalculateScores } from './db.js'
+import { runMigrations, getSetting, upsertSetting, getOrCreateJwtSecret, ensureClipFeed, recalculateScores, purgeExpiredArticles } from './db.js'
 import { logger } from './logger.js'
 
 const log = logger
@@ -213,6 +213,45 @@ cronTasks.push(cron.schedule('0 */6 * * *', async () => {
     await rebuildSearchIndex()
   } catch (err) {
     log.error('[cron] Search index rebuild error:', err)
+  }
+}))
+
+// --- Retention policy ---
+// Daily cleanup of old articles based on user-configured retention settings.
+const RETENTION_SCHEDULE = process.env.RETENTION_SCHEDULE || '0 4 * * *'
+
+cronTasks.push(cron.schedule(RETENTION_SCHEDULE, () => {
+  const enabled = getSetting('retention.enabled')
+  if (enabled !== 'on') return
+
+  const readDays = Number(getSetting('retention.read_days'))
+  const unreadDays = Number(getSetting('retention.unread_days'))
+  if (isNaN(readDays) || isNaN(unreadDays) || readDays < 1 || unreadDays < 1) return
+
+  try {
+    const { purged } = purgeExpiredArticles(readDays, unreadDays)
+    log.info(`[cron] Retention purge: ${purged} articles`)
+
+    if (purged > 0) {
+      // Checkpoint WAL to reclaim space
+      try {
+        getDb().exec('PRAGMA wal_checkpoint(TRUNCATE)')
+      } catch {
+        // non-critical
+      }
+
+      // Weekly VACUUM on Sundays when articles were purged
+      if (new Date().getDay() === 0) {
+        try {
+          getDb().exec('VACUUM')
+          log.info('[cron] Weekly VACUUM completed')
+        } catch (err) {
+          log.error('[cron] VACUUM error:', err)
+        }
+      }
+    }
+  } catch (err) {
+    log.error('[cron] Retention purge error:', err)
   }
 }))
 

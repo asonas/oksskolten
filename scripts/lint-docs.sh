@@ -4,6 +4,11 @@ set -euo pipefail
 REMARK="./node_modules/.bin/remark"
 PROJECT_ROOT="$(pwd)"
 
+if [[ ! -x "$REMARK" ]]; then
+  echo "Error: remark-cli not found. Run 'npm install' first." >&2
+  exit 1
+fi
+
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 

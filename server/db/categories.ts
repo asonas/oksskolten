@@ -52,10 +52,10 @@ export function deleteCategory(id: number): boolean {
 
 export function markAllSeenByCategory(categoryId: number): { updated: number } {
   const affectedIds = (getDb().prepare(
-    'SELECT id FROM articles WHERE seen_at IS NULL AND category_id = ?',
+    'SELECT id FROM active_articles WHERE seen_at IS NULL AND category_id = ?',
   ).all(categoryId) as { id: number }[]).map(r => r.id)
   const result = getDb().prepare(
-    "UPDATE articles SET seen_at = datetime('now') WHERE seen_at IS NULL AND category_id = ?",
+    "UPDATE articles SET seen_at = datetime('now') WHERE seen_at IS NULL AND purged_at IS NULL AND category_id = ?",
   ).run(categoryId)
   if (affectedIds.length > 0) {
     syncArticleFiltersToSearch(affectedIds.map(id => ({ id, is_unread: false })))

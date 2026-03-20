@@ -4,6 +4,9 @@ import {
   getSetting,
   upsertSetting,
   deleteSetting,
+  getRetentionStats,
+  purgeExpiredArticles,
+  getDb,
 } from '../db.js'
 import { requireJson, getAuthUser } from '../auth.js'
 import { getAllModelValues, getModelValues } from '../../shared/models.js'
@@ -48,6 +51,9 @@ const PREF_KEYS = [
   'ollama.base_url',
   'ollama.custom_headers',
   'custom_themes',
+  'retention.enabled',
+  'retention.read_days',
+  'retention.unread_days',
 ] as const
 type PrefKey = typeof PREF_KEYS[number]
 
@@ -77,6 +83,9 @@ const PREF_ALLOWED: Record<PrefKey, string[] | null> = {
   'ollama.base_url': null,
   'ollama.custom_headers': null,
   'custom_themes': null,
+  'retention.enabled': ['on', 'off'],
+  'retention.read_days': null,
+  'retention.unread_days': null,
 }
 
 const PROVIDER_MODEL_PAIRS: Array<{ providerKey: PrefKey; modelKey: PrefKey }> = [
@@ -191,6 +200,14 @@ export async function settingsRoutes(api: FastifyInstance): Promise<void> {
         }
         reply.status(400).send({ error: `Invalid value for ${key}` })
         return
+      }
+      // Validate retention days: must be a positive integer
+      if (key === 'retention.read_days' || key === 'retention.unread_days') {
+        const parsed = z.coerce.number().int().min(1).max(9999).safeParse(value)
+        if (!parsed.success) {
+          reply.status(400).send({ error: `${key} must be a positive integer (1-9999)` })
+          return
+        }
       }
       upsertSetting(key, value)
       updated = true
@@ -459,6 +476,47 @@ export async function settingsRoutes(api: FastifyInstance): Promise<void> {
       const message = err instanceof Error ? err.message : 'Unknown error'
       reply.status(502).send({ error: `Healthcheck failed: ${message}` })
     }
+  })
+
+  // --- Retention policy ---
+
+  function getRetentionDays(): { readDays: number; unreadDays: number } | null {
+    const readDays = Number(getSetting('retention.read_days'))
+    const unreadDays = Number(getSetting('retention.unread_days'))
+    if (isNaN(readDays) || isNaN(unreadDays) || readDays < 1 || unreadDays < 1) return null
+    return { readDays, unreadDays }
+  }
+
+  api.get('/api/settings/retention/stats', async (_request, reply) => {
+    const days = getRetentionDays()
+    if (!days) {
+      reply.send({ readDays: 0, unreadDays: 0, readEligible: 0, unreadEligible: 0 })
+      return
+    }
+    const stats = getRetentionStats(days.readDays, days.unreadDays)
+    reply.send({ readDays: days.readDays, unreadDays: days.unreadDays, ...stats })
+  })
+
+  api.post('/api/settings/retention/purge', async (_request, reply) => {
+    if (getSetting('retention.enabled') !== 'on') {
+      reply.status(400).send({ error: 'Retention policy is not enabled' })
+      return
+    }
+    const days = getRetentionDays()
+    if (!days) {
+      reply.send({ purged: 0 })
+      return
+    }
+    const result = purgeExpiredArticles(days.readDays, days.unreadDays)
+
+    // Checkpoint WAL after purge
+    try {
+      getDb().exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } catch {
+      // non-critical
+    }
+
+    reply.send(result)
   })
 
   // --- Provider API key management ---

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setupTestDb } from '../__tests__/helpers/testDb.js'
 import { buildApp } from '../__tests__/helpers/buildApp.js'
-import { upsertSetting, getSetting } from '../db.js'
+import { upsertSetting, getSetting, createFeed, insertArticle, markArticleSeen, getDb } from '../db.js'
 import type { FastifyInstance } from 'fastify'
 
 // ---------------------------------------------------------------------------
@@ -568,6 +568,121 @@ describe('POST /api/settings/api-keys/:provider', () => {
       url: '/api/settings/api-keys/deepseek',
       headers: json,
       payload: { apiKey: 'key' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+})
+
+// =========================================================================
+// Retention policy endpoints
+// =========================================================================
+
+function daysAgo(days: number): string {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
+}
+
+describe('GET /api/settings/retention/stats', () => {
+  it('returns zeros when retention is not configured', async () => {
+    const res = await app.inject({ method: 'GET', url: '/api/settings/retention/stats' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ readDays: 0, unreadDays: 0, readEligible: 0, unreadEligible: 0 })
+  })
+
+  it('returns eligible counts when configured', async () => {
+    const feed = createFeed({ name: 'F', url: 'https://f.com' })
+    const id = insertArticle({ feed_id: feed.id, title: 'Old', url: 'https://f.com/1', published_at: '2025-01-01T00:00:00Z' })
+    markArticleSeen(id, true)
+    getDb().prepare('UPDATE articles SET seen_at = ? WHERE id = ?').run(daysAgo(100), id)
+
+    upsertSetting('retention.enabled', 'on')
+    upsertSetting('retention.read_days', '90')
+    upsertSetting('retention.unread_days', '180')
+
+    const res = await app.inject({ method: 'GET', url: '/api/settings/retention/stats' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().readEligible).toBe(1)
+    expect(res.json().readDays).toBe(90)
+  })
+})
+
+describe('POST /api/settings/retention/purge', () => {
+  it('returns 400 when retention is not enabled', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/settings/retention/purge' })
+    expect(res.statusCode).toBe(400)
+    expect(res.json().error).toMatch(/not enabled/)
+  })
+
+  it('returns purged: 0 when enabled but no days configured', async () => {
+    upsertSetting('retention.enabled', 'on')
+
+    const res = await app.inject({ method: 'POST', url: '/api/settings/retention/purge' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().purged).toBe(0)
+  })
+
+  it('purges eligible articles', async () => {
+    const feed = createFeed({ name: 'F', url: 'https://f.com' })
+    const id = insertArticle({ feed_id: feed.id, title: 'Old', url: 'https://f.com/1', published_at: '2025-01-01T00:00:00Z' })
+    markArticleSeen(id, true)
+    getDb().prepare('UPDATE articles SET seen_at = ? WHERE id = ?').run(daysAgo(100), id)
+
+    upsertSetting('retention.enabled', 'on')
+    upsertSetting('retention.read_days', '90')
+    upsertSetting('retention.unread_days', '180')
+
+    const res = await app.inject({ method: 'POST', url: '/api/settings/retention/purge' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().purged).toBe(1)
+  })
+})
+
+describe('PATCH /api/settings/preferences — retention validation', () => {
+  it('accepts valid retention day values', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/preferences',
+      headers: json,
+      payload: { 'retention.read_days': '90', 'retention.unread_days': '180' },
+    })
+    expect(res.statusCode).toBe(200)
+  })
+
+  it('rejects non-integer retention days', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/preferences',
+      headers: json,
+      payload: { 'retention.read_days': '3.5' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects zero retention days', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/preferences',
+      headers: json,
+      payload: { 'retention.read_days': '0' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects negative retention days', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/preferences',
+      headers: json,
+      payload: { 'retention.unread_days': '-10' },
+    })
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('rejects retention days exceeding 9999', async () => {
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/settings/preferences',
+      headers: json,
+      payload: { 'retention.read_days': '10000' },
     })
     expect(res.statusCode).toBe(400)
   })
