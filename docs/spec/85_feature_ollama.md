@@ -39,7 +39,7 @@ Ollama may be exposed through a reverse proxy (e.g. Cloudflare Tunnel) that requ
 
 #### UI
 
-The `OllamaCard` component includes a "Custom Headers" section below the base URL input. Each header is displayed as a key-value pair with add/remove controls. Headers are stored as JSON on save. The values are displayed as password fields (masked) since they may contain secrets.
+The `OllamaCard` component includes a "Custom Headers" section below the base URL input. Each header is an editable key-value pair with add/remove controls. Both key and value are plain text fields (not masked) for ease of editing. Headers are stored as JSON on save.
 
 #### Validation
 
@@ -253,19 +253,19 @@ export const ollamaProvider: LLMProvider = {
 ```typescript
 export async function runOpenAITurn(
   params: ChatTurnParams,
-  client?: OpenAI,
+  externalClient?: OpenAI,
 ): Promise<RunChatTurnResult> {
-  if (!client && !getSetting('api_key.openai')) {
+  if (!externalClient && !getSetting('api_key.openai')) {
     throw new Error('OPENAI_KEY_NOT_SET')
   }
-  const actualClient = client ?? getOpenAIClient()
-  // ... rest uses actualClient
+  const client = externalClient ?? getOpenAIClient()
+  // ... rest uses client
 }
 ```
 
 ### Model Validation
 
-Since Ollama models are dynamic, the `validateProviderModel()` function in `settings.ts` skips model validation when provider is `ollama` (similar to `google-translate` and `deepl`).
+Since Ollama models are dynamic, the `validateProviderModel()` function in `settings.ts` skips model validation when provider is `ollama` (similar to `google-translate` and `deepl`). Additionally, `PREF_ALLOWED` for `chat.model`, `summary.model`, and `translate.model` is set to `null` (accept any string) rather than `getAllModelValues()`, because dynamic Ollama model names would otherwise be rejected on save. The `validateProviderModel()` function still enforces model validity for static providers.
 
 ### `shared/models.ts` Changes
 
@@ -300,7 +300,7 @@ No Ollama-specific log fields. The existing AI task logging records `provider`, 
   - Client is constructed with correct base URL from settings
   - Default base URL is used when setting is absent
   - `requireKey` does not throw (no API key required)
-- **Integration**: Manual test with a locally installed Ollama instance. Not required for CI. Docker Compose is not modified; developers install Ollama on their machine and run `ollama serve` for manual testing.
+- **Integration**: Manual test with a locally installed Ollama instance. Not required for CI. `compose.yaml` includes `OLLAMA_BASE_URL: http://host.docker.internal:11434` for Docker environments. Developers install Ollama on their machine and run `ollama serve` for manual testing.
 
 ## Out of Scope
 
@@ -311,7 +311,7 @@ No Ollama-specific log fields. The existing AI task logging records `provider`, 
 
 ## Current Status
 
-Implementation complete.
+Validation complete.
 
 Implementors MUST keep this section updated as they work.
 
@@ -336,6 +336,13 @@ Implementors MUST keep this section updated as they work.
 - [x] `server/providers/llm/ollama.ts` — Base URL fallback: DB setting → env var → default
 - [x] `src/pages/settings/sections/task-model-section.tsx` — Fix `hasAnyLlmKey` to include Ollama
 
+### Discrepancies
+
+- **Spec said header values are password fields** — spec updated to match implementation (plain text, editable key-value). Resolution: spec updated
+- **Spec said "Docker Compose is not modified"** — spec updated to reflect compose.yaml change. Resolution: spec updated
+- **Spec PREF_ALLOWED for model fields changed to null** — spec updated with rationale in Model Validation section. Resolution: spec updated
+- **adapter-openai.ts parameter name** — spec updated from `client` to `externalClient`. Resolution: spec updated
+
 ### Updates
 
 - 2026-03-20: Spec interview completed. All design decisions documented.
@@ -343,3 +350,4 @@ Implementors MUST keep this section updated as they work.
 - 2026-03-20: All initial checklist items implemented. Server: ollama.ts provider, index.ts registration, ai.ts billing type, adapter-openai.ts client param, adapter.ts routing, settings.ts PREF_KEYS + endpoints. Frontend: OllamaCard component, dynamic ModelSelect, configuredKeys. 7 unit tests pass. Typecheck clean.
 - 2026-03-20: Spec updated with custom headers support, OLLAMA_BASE_URL env var fallback, compose.yaml change, hasAnyLlmKey fix. New checklist items added.
 - 2026-03-20: All items implemented. Custom headers: ollama.ts (defaultHeaders + cache key), settings.ts (PREF_KEYS + ollamaFetch), OllamaCard (key-value UI with masked values), i18n keys. 11 unit tests, 1491 total tests pass. Typecheck clean.
+- 2026-03-20: Validation completed. 4 discrepancies found and resolved (all spec updates): header UI masking, compose.yaml change, PREF_ALLOWED null, parameter naming.
