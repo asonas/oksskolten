@@ -14,6 +14,9 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   openExternal: ';',
 }
 
+/** Number of items from the end at which onNearEnd fires */
+const NEAR_END_THRESHOLD = 5
+
 interface UseKeyboardNavigationOptions {
   items: string[]
   focusedItemId: string | null
@@ -22,6 +25,7 @@ interface UseKeyboardNavigationOptions {
   onEscape?: () => void
   onBookmarkToggle?: (id: string) => void
   onOpenExternal?: (id: string) => void
+  onNearEnd?: () => void
   enabled: boolean
   keyBindings?: KeyBindings
 }
@@ -36,7 +40,7 @@ export function useKeyboardNavigation(options: UseKeyboardNavigationOptions) {
     if (!options.enabled) return
 
     function handleKeyDown(e: KeyboardEvent) {
-      const { items, focusedItemId, onFocusChange, onEnter, onEscape, onBookmarkToggle, onOpenExternal, keyBindings } = optionsRef.current
+      const { items, focusedItemId, onFocusChange, onEnter, onEscape, onBookmarkToggle, onOpenExternal, onNearEnd, keyBindings } = optionsRef.current
       const bindings = keyBindings ?? DEFAULT_KEY_BINDINGS
 
       const target = e.target as HTMLElement
@@ -71,6 +75,9 @@ export function useKeyboardNavigation(options: UseKeyboardNavigationOptions) {
           const nextIndex = currentIndex + 1
           if (nextIndex < items.length) {
             onFocusChange(items[nextIndex])
+            if (items.length - nextIndex <= NEAR_END_THRESHOLD && onNearEnd) {
+              onNearEnd()
+            }
           }
         } else {
           const prevIndex = currentIndex - 1

@@ -185,6 +185,7 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
       const article = articleMap.get(id)
       if (article?.url) window.open(article.url, '_blank')
     },
+    onNearEnd: () => loadMoreRef.current(),
     enabled: isKeyboardNavEnabled,
     keyBindings: keybindings,
   })

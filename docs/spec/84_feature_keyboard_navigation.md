@@ -142,7 +142,13 @@ Minimal ARIA attributes are applied:
 ### Boundary Behavior
 
 - Pressing the prev key at the top of the list: no action (stays at the top)
-- Pressing the next key at the bottom of the list: no action (stays at the bottom). Does not trigger infinite scroll page loading
+- Pressing the next key at the bottom of the loaded list: no action (stays at the bottom)
+
+### Prefetch on Near-End Navigation
+
+When the user navigates with the next key and the focused article is within **5 items of the end** of the currently loaded list, the next page of articles is prefetched via `useSWRInfinite`'s `setSize`. This ensures seamless reading — new articles load before the user reaches the end, so keyboard-driven reading never hits a dead end while unread articles remain.
+
+The threshold of 5 items provides enough buffer for the fetch to complete before the user reaches the last loaded article. The `onNearEnd` callback in `useKeyboardNavigation` fires only when `has_more` is true, avoiding unnecessary requests.
 
 ### Scroll Control
 
