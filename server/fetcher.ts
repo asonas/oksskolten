@@ -333,6 +333,7 @@ export async function fetchAllFeeds(
               url: item.url,
               published_at: item.published_at,
               requires_js_challenge: !!feed.requires_js_challenge,
+              excerpt: item.excerpt,
             }))
 
           allTasks.push(...newItems)
