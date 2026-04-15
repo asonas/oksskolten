@@ -73,6 +73,9 @@ const dict = {
   'articles.empty': { ja: '記事がありません', en: 'No articles', zh: '暂无文章'},
   'articles.allRead': { ja: 'すべて読みました', en: 'All caught up!', zh: '全部读完了！'},
   'articles.showReadArticles': { ja: '既読記事を表示する', en: 'Show read articles', zh: '显示已读文章'},
+  'articles.sortLabel': { ja: '並び順', en: 'Sort', zh: '排序'},
+  'articles.sortNewest': { ja: '新しい順', en: 'Newest', zh: '最新优先'},
+  'articles.sortOldest': { ja: '古い順', en: 'Oldest', zh: '最早优先'},
 
   // FeedErrorBanner - pipeline stages
   'feedError.stage.discovery': { ja: 'RSS検出', en: 'RSS Discovery', zh: 'RSS 发现'},

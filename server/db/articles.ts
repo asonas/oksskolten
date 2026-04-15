@@ -95,6 +95,7 @@ export function getArticles(opts: {
   liked?: boolean
   read?: boolean
   sort?: 'score'
+  order?: 'asc' | 'desc'
   limit: number
   offset: number
   smartFloor?: boolean
@@ -179,7 +180,11 @@ export function getArticles(opts: {
   const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : ''
   const orderBy = opts.sort === 'score'
     ? 'a.score DESC, a.published_at DESC'
-    : opts.liked ? 'a.liked_at DESC' : opts.read ? 'a.read_at DESC' : 'a.published_at DESC'
+    : opts.liked ? 'a.liked_at DESC'
+      : opts.read ? 'a.read_at DESC'
+        : opts.order === 'asc'
+          ? 'a.published_at IS NULL, a.published_at ASC'
+          : 'a.published_at DESC'
 
   const totalRow = getNamed<{ cnt: number }>(`
     SELECT COUNT(*) AS cnt FROM active_articles a ${where}

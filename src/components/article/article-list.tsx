@@ -68,7 +68,10 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
   const bookmarkedOnly = isBookmarks
   const likedOnly = isLikes
   const readOnly = isHistory
-  const { autoMarkRead, dateMode, indicatorStyle, layout, articleOpenMode, keyboardNavigation, keybindings } = settings
+  const { autoMarkRead, dateMode, indicatorStyle, layout, articleOpenMode, keyboardNavigation, keybindings, articleSort, setArticleSort } = settings
+  const isClipFeed = currentFeed?.type === 'clip'
+  const sortToggleEnabled = !isCollectionView && !isClipFeed && (isInbox || feedId != null || categoryId != null)
+  const order: 'desc' | 'asc' = sortToggleEnabled ? articleSort : 'desc'
   const [overlayUrl, setOverlayUrl] = useState<string | null>(null)
   const [noFloor, setNoFloor] = useState(false)
   const displayConfig: ArticleDisplayConfig = useMemo(() => ({
@@ -91,6 +94,7 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
     if (likedOnly) params.set('liked', '1')
     if (readOnly) params.set('read', '1')
     if (noFloor) params.set('no_floor', '1')
+    if (order === 'asc') params.set('order', 'asc')
     params.set('limit', String(PAGE_SIZE))
     params.set('offset', String(pageIndex * PAGE_SIZE))
     return `/api/articles?${params.toString()}`
@@ -397,13 +401,13 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
     }
   }, [feedId, categoryId, flushBatch])
 
-  // Reset autoReadIds, noFloor, showReadArticles, and keyboard focus when feed/category changes
+  // Reset autoReadIds, noFloor, showReadArticles, and keyboard focus when feed/category/order changes
   useEffect(() => {
     setAutoReadIds(new Set())
     setNoFloor(false)
     setShowReadArticles(false)
     setFocusedItemId(null)
-  }, [feedId, categoryId, setFocusedItemId])
+  }, [feedId, categoryId, order, setFocusedItemId])
 
   return (
     <main ref={listRef} className="max-w-2xl mx-auto" role={!isGridLayout ? 'listbox' : undefined}>
@@ -421,6 +425,36 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
 
       {currentFeed && currentFeed.type !== 'clip' && settings.showFeedActivity === 'on' && (
         <FeedMetricsBar feed={currentFeed} />
+      )}
+
+      {sortToggleEnabled && (
+        <div
+          role="group"
+          aria-label={t('articles.sortLabel')}
+          className="flex gap-1 px-4 md:px-6 py-2 text-xs"
+        >
+          {([
+            { value: 'desc' as const, label: t('articles.sortNewest') },
+            { value: 'asc' as const, label: t('articles.sortOldest') },
+          ]).map(opt => {
+            const selected = articleSort === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                aria-pressed={selected}
+                onClick={() => setArticleSort(opt.value)}
+                className={`px-2 py-1 rounded border transition-colors ${
+                  selected
+                    ? 'border-accent text-accent bg-accent/10'
+                    : 'border-border text-muted hover:text-text hover:border-text/30'
+                }`}
+              >
+                {opt.label}
+              </button>
+            )
+          })}
+        </div>
       )}
 
       {isLoading && <ArticleListSkeleton layout={layout} showThumbnails={displayConfig.showThumbnails} />}

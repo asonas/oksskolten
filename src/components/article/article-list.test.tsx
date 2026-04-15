@@ -159,6 +159,8 @@ const mockSettings = {
   setHighlightTheme: vi.fn(),
   articleFont: 'sans' as const,
   setArticleFont: vi.fn(),
+  articleSort: 'desc' as 'desc' | 'asc',
+  setArticleSort: vi.fn(),
   save: vi.fn(),
 }
 
@@ -447,6 +449,52 @@ describe('ArticleList', () => {
     const readEl = document.querySelector('[data-article-id="2"]')
     expect(unreadEl?.getAttribute('data-article-unread')).toBe('1')
     expect(readEl?.getAttribute('data-article-unread')).toBe('0')
+  })
+
+  it('renders sort toggle on inbox', () => {
+    swrInfiniteReturn = {
+      data: [{ articles: [makeArticle({ id: 1 })], total: 1, has_more: false }],
+      error: undefined,
+      size: 1,
+      setSize: vi.fn(),
+      isLoading: false,
+      isValidating: false,
+      mutate: vi.fn(),
+    }
+    renderArticleList('/inbox')
+    const toggle = screen.getByRole('group', { name: 'Sort' })
+    expect(toggle).toBeTruthy()
+    expect(screen.getByText('Newest')).toBeTruthy()
+    expect(screen.getByText('Oldest')).toBeTruthy()
+  })
+
+  it('does not render sort toggle on bookmarks', () => {
+    swrInfiniteReturn = {
+      data: [{ articles: [], total: 0, has_more: false }],
+      error: undefined,
+      size: 1,
+      setSize: vi.fn(),
+      isLoading: false,
+      isValidating: false,
+      mutate: vi.fn(),
+    }
+    renderArticleList('/bookmarks')
+    expect(screen.queryByRole('group', { name: 'Sort' })).toBeNull()
+  })
+
+  it('calls setArticleSort when oldest is clicked', () => {
+    swrInfiniteReturn = {
+      data: [{ articles: [], total: 0, has_more: false }],
+      error: undefined,
+      size: 1,
+      setSize: vi.fn(),
+      isLoading: false,
+      isValidating: false,
+      mutate: vi.fn(),
+    }
+    renderArticleList('/inbox')
+    screen.getByText('Oldest').click()
+    expect(mockSettings.setArticleSort).toHaveBeenCalledWith('asc')
   })
 
   it('validating state shows skeleton in sentinel', () => {

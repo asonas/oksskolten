@@ -62,6 +62,7 @@ const ArticlesQuery = z.object({
   liked: z.string().optional(),
   read: z.string().optional(),
   sort: z.string().optional(),
+  order: z.enum(['asc', 'desc']).optional(),
   no_floor: z.string().optional(),
   limit: coerceOptionalNumber,
   offset: coerceOptionalNumber,
@@ -222,11 +223,12 @@ export async function articleRoutes(api: FastifyInstance): Promise<void> {
     const liked = query.liked === '1'
     const read = query.read === '1'
     const sort = query.sort === 'score' ? 'score' as const : undefined
+    const order = query.order
     const noFloor = query.no_floor === '1'
 
     const isClipFeed = feedId != null && getClipFeed()?.id === feedId
-    const smartFloor = !noFloor && !isClipFeed && !unread && !bookmarked && !liked && !read
-    const { articles, total, totalWithoutFloor } = getArticles({ feedId, categoryId, unread, bookmarked, liked, read, sort, limit, offset, smartFloor })
+    const smartFloor = !noFloor && !isClipFeed && !unread && !bookmarked && !liked && !read && order !== 'asc'
+    const { articles, total, totalWithoutFloor } = getArticles({ feedId, categoryId, unread, bookmarked, liked, read, sort, order, limit, offset, smartFloor })
     const hasMore = offset + articles.length < total
 
     // When unread filter yields 0 results, return total article count (without unread filter)

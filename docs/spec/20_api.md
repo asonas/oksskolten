@@ -339,6 +339,7 @@ Query parameters:
 | `liked` | `"1"` | — | When specified, returns only liked articles |
 | `read` | `"1"` | — | When specified, returns only read articles (`read_at IS NOT NULL`). For the `/history` route |
 | `sort` | `"score"` | — | When specified, sorts by score descending. When omitted, uses existing logic (liked→`liked_at DESC`, read→`read_at DESC`, otherwise→`published_at DESC`) |
+| `order` | `"asc"` / `"desc"` | `"desc"` | Controls `published_at` ordering. `asc` returns oldest-first (`published_at IS NULL, published_at ASC`, NULLs last). Ignored when `sort=score` is present, and implicitly disables Smart Floor when `asc` |
 | `limit` | number | 20 | Number of items to fetch (max 100) |
 | `offset` | number | 0 | Offset |
 

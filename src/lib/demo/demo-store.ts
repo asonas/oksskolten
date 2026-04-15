@@ -242,15 +242,22 @@ export const demoStore = {
     bookmarked?: boolean
     liked?: boolean
     read?: boolean
+    order?: 'asc' | 'desc'
     limit?: number
     offset?: number
   }) {
+    const ascending = params.order === 'asc'
     let result = articles
       .map(toArticleListItem)
       .sort((a, b) => {
         const da = a.published_at ? new Date(a.published_at).getTime() : 0
         const db = b.published_at ? new Date(b.published_at).getTime() : 0
-        return db - da
+        // NULLs last for both directions: treat missing dates (0) as most recent in desc,
+        // which for asc means they end up at the end when sorted ascending by da-db.
+        // Match server behavior (published_at IS NULL, published_at <dir>).
+        if (da === 0 && db !== 0) return 1
+        if (db === 0 && da !== 0) return -1
+        return ascending ? da - db : db - da
       })
 
     if (params.feedId) result = result.filter(a => a.feed_id === params.feedId)

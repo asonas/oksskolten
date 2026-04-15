@@ -338,6 +338,62 @@ describe('useSettings', () => {
     expect(lastPatch['appearance.highlight_theme']).toBe('')
   })
 
+  it('hydrates articleSort from DB prefs', () => {
+    swrData = {
+      'appearance.color_theme': null,
+      'reading.date_mode': null,
+      'reading.auto_mark_read': null,
+      'reading.unread_indicator': null,
+      'reading.internal_links': null,
+      'reading.article_sort': 'asc',
+      'appearance.highlight_theme': null,
+    }
+
+    const { result } = renderHook(() => useSettings())
+
+    // hydrate happens via localStorage-backed hook; verify exposed value
+    expect(result.current.articleSort).toBe('asc')
+  })
+
+  it('syncedSetArticleSort: marks dirty and schedules save', () => {
+    const { result } = renderHook(() => useSettings())
+
+    act(() => {
+      result.current.setArticleSort('asc')
+    })
+
+    expect(result.current.articleSort).toBe('asc')
+
+    act(() => {
+      vi.advanceTimersByTime(500)
+    })
+
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/settings/preferences',
+      expect.objectContaining({ 'reading.article_sort': 'asc' }),
+    )
+  })
+
+  it('backfills articleSort to DB when unset', () => {
+    localStorage.removeItem('article-sort')
+    swrData = {
+      'appearance.color_theme': null,
+      'reading.date_mode': null,
+      'reading.auto_mark_read': null,
+      'reading.unread_indicator': null,
+      'reading.internal_links': null,
+      'reading.article_sort': null,
+      'appearance.highlight_theme': null,
+    }
+
+    renderHook(() => useSettings())
+
+    expect(mockApiPatch).toHaveBeenCalledWith(
+      '/api/settings/preferences',
+      expect.objectContaining({ 'reading.article_sort': 'desc' }),
+    )
+  })
+
   it('hydrates highlight_theme from DB prefs', () => {
     swrData = {
       'appearance.color_theme': null,

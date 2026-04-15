@@ -814,3 +814,61 @@ describe('getRetryStats', () => {
     expect(stats.exceeded).toBe(1)
   })
 })
+
+// --- getArticles: order parameter ---
+
+describe('getArticles order parameter', () => {
+  it('defaults to descending by published_at', () => {
+    const feed = seedFeed()
+    seedArticle(feed.id, { url: 'https://example.com/old', published_at: '2025-01-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/mid', published_at: '2025-02-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/new', published_at: '2025-03-01T00:00:00Z' })
+
+    const { articles } = getArticles({ limit: 100, offset: 0 })
+    expect(articles.map(a => a.url)).toEqual([
+      'https://example.com/new',
+      'https://example.com/mid',
+      'https://example.com/old',
+    ])
+  })
+
+  it('order=asc returns oldest first', () => {
+    const feed = seedFeed()
+    seedArticle(feed.id, { url: 'https://example.com/old', published_at: '2025-01-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/mid', published_at: '2025-02-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/new', published_at: '2025-03-01T00:00:00Z' })
+
+    const { articles } = getArticles({ order: 'asc', limit: 100, offset: 0 })
+    expect(articles.map(a => a.url)).toEqual([
+      'https://example.com/old',
+      'https://example.com/mid',
+      'https://example.com/new',
+    ])
+  })
+
+  it('order=asc keeps NULL published_at at the end (NULLs last)', () => {
+    const feed = seedFeed()
+    seedArticle(feed.id, { url: 'https://example.com/a', published_at: '2025-01-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/b', published_at: '2025-02-01T00:00:00Z' })
+    seedArticle(feed.id, { url: 'https://example.com/null', published_at: null })
+
+    const { articles } = getArticles({ order: 'asc', limit: 100, offset: 0 })
+    expect(articles.map(a => a.url)).toEqual([
+      'https://example.com/a',
+      'https://example.com/b',
+      'https://example.com/null',
+    ])
+  })
+
+  it('sort=score takes precedence over order', () => {
+    const feed = seedFeed()
+    const idOld = seedArticle(feed.id, { url: 'https://example.com/old', published_at: '2025-01-01T00:00:00Z' })
+    const idNew = seedArticle(feed.id, { url: 'https://example.com/new', published_at: '2025-03-01T00:00:00Z' })
+    getDb().prepare('UPDATE articles SET score = ? WHERE id = ?').run(5, idOld)
+    getDb().prepare('UPDATE articles SET score = ? WHERE id = ?').run(1, idNew)
+
+    // Even with order=asc, sort=score should still put highest-scored first
+    const { articles } = getArticles({ sort: 'score', order: 'asc', limit: 100, offset: 0 })
+    expect(articles[0].url).toBe('https://example.com/old')
+  })
+})

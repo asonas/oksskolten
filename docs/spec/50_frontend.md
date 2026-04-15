@@ -108,6 +108,14 @@ Displays update frequency and activity level for feeds.
 - Heavy data (average article length) is fetched on demand from `/api/feeds/:id/metrics`
 - Not displayed for clip feeds
 
+**Sort order toggle**
+- Shown at the top of the article list on `/inbox`, `/feeds/:feedId` (non-clip), and `/categories/:categoryId`
+- Hidden on Bookmarks, Likes, History, Clips, and clip-type feed views (those are ordered by `bookmarked_at` / `liked_at` / `read_at` or a special axis)
+- Two-button segmented control: Newest (`published_at DESC`) / Oldest (`published_at ASC`), text-only, with `role="group"` and `aria-pressed`
+- Selection is persisted via `reading.article_sort` (`'desc'` / `'asc'`, default `'desc'`) in the ADR-001 dual-layer store and shared across Inbox / Feed / Category views
+- When `asc` is active, Smart Floor is disabled server-side and the list shows oldest-first
+- Toggling resets `autoReadIds`, `noFloor`, `showReadArticles`, and the keyboard focus, matching feed/category navigation behavior
+
 ### Markdown Rendering
 
 All Markdown-to-HTML rendering goes through `renderMarkdown()` in `src/lib/markdown.ts`. This function applies a preprocessing pipeline before passing the result to `marked` (GFM mode, with `highlight.js` syntax highlighting).

@@ -102,6 +102,8 @@ export async function demoFetcher(url: string): Promise<unknown> {
   }
 
   if (path === '/api/articles') {
+    const orderParam = params.get('order')
+    const order: 'asc' | 'desc' | undefined = orderParam === 'asc' || orderParam === 'desc' ? orderParam : undefined
     return demoStore.getArticles({
       feedId: params.get('feed_id') ? Number(params.get('feed_id')) : undefined,
       categoryId: params.get('category_id') ? Number(params.get('category_id')) : undefined,
@@ -109,6 +111,7 @@ export async function demoFetcher(url: string): Promise<unknown> {
       bookmarked: params.get('bookmarked') === '1',
       liked: params.get('liked') === '1',
       read: params.get('read') === '1',
+      order,
       limit: Number(params.get('limit')) || 20,
       offset: Number(params.get('offset')) || 0,
     })
