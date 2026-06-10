@@ -213,3 +213,14 @@ Supported bulk actions:
 | Mark All Read | Calls `POST /api/feeds/:id/mark-all-seen` for each feed |
 | Fetch | Fetches each selected enabled feed sequentially |
 | Delete | Requires confirmation dialog. Deletes each feed via `DELETE /api/feeds/:id` |
+
+### Feed Management Tab (`/settings/viewer`)
+
+The "Feeds" settings tab (`src/pages/settings/viewer-tab.tsx`) provides a centralized list of all subscribed feeds with management actions, complementing the sidebar context menu (which requires right-click and is not discoverable on touch devices).
+
+| Item | Detail |
+|---|---|
+| List | All feeds from `GET /api/feeds`, showing name, URL, category badge, and a Disabled badge for auto-disabled feeds |
+| Filter | Client-side text filter matching feed name or URL, with a result count |
+| Rename | Inline edit via pencil button. Enter saves (`PATCH /api/feeds/:id` with `name`), Escape or blur cancels |
+| Delete | Trash button opens a confirmation dialog, then calls `DELETE /api/feeds/:id` (cascades to articles). The clip feed has no delete button — the API rejects clip feed deletion with 403 |
