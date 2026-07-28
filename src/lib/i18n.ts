@@ -348,6 +348,13 @@ const dict = {
   'settings.categoryUnreadOnlyOn': { ja: 'オン', en: 'On', zh: '开'},
   'settings.categoryUnreadOnlyOff': { ja: 'オフ', en: 'Off', zh: '关'},
 
+  'settings.articleSort': { ja: '記事の並び順', en: 'Article Sort Order', zh: '文章排序'},
+  'settings.articleSortDesc': {
+    ja: 'Inbox・フィード・カテゴリの一覧を公開日時のどちら向きで並べるかを選びます',
+    en: 'Choose the publication-date direction for the Inbox, feed, and category lists',
+    zh: '选择收件箱、订阅源和分类列表按发布时间的排序方向'
+  },
+
   // Language
   'settings.language': { ja: '言語', en: 'Language', zh: '语言'},
   'settings.languageDesc': { ja: 'UIの表示言語', en: 'Display language for UI', zh: '界面显示语言'},

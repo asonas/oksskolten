@@ -15,6 +15,7 @@ export function ReadingSection() {
     indicatorStyle,
     internalLinks, setInternalLinks,
     categoryUnreadOnly, setCategoryUnreadOnly,
+    articleSort, setArticleSort,
     showThumbnails, setShowThumbnails,
     showFeedActivity, setShowFeedActivity,
     chatPosition, setChatPosition,
@@ -378,6 +379,20 @@ export function ReadingSection() {
           ]}
           value={categoryUnreadOnly}
           onChange={setCategoryUnreadOnly}
+        />
+      </div>
+
+      <div className="mt-6">
+        <p className="text-sm text-text mb-1">{t('settings.articleSort')}</p>
+        <p className="text-xs text-muted mb-3">{t('settings.articleSortDesc')}</p>
+        <RadioGroup
+          name="articleSort"
+          options={[
+            { value: 'desc' as const, label: t('articles.sortNewest') },
+            { value: 'asc' as const, label: t('articles.sortOldest') },
+          ]}
+          value={articleSort}
+          onChange={setArticleSort}
         />
       </div>
 

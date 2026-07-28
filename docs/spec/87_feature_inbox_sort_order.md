@@ -17,7 +17,7 @@
 ### In Scope
 
 - 対象画面: `/inbox`、`/feeds/:feedId`、`/categories/:categoryId`
-- 設定 UI: 記事一覧のヘッダ（`article-list.tsx` 上部）にインライン・トグルを表示
+- 設定 UI: 記事一覧のヘッダ（`article-list.tsx` 上部）にインライン・トグルを表示し、加えて Settings → Reading にラジオグループを置く。どちらも同じ `reading.article_sort` を読み書きするので、一方で切り替えると他方にも即時反映される
 - `reading.article_sort` 設定キーを localStorage + DB の二層で永続化。値は `'desc' | 'asc'`、デフォルト `'desc'`。Inbox / Feed / Category で共通の単一設定（どれかで切り替えると他の一覧にも即時反映）
 - `GET /api/articles` に新クエリパラメータ `order=asc|desc` を追加（省略時 `desc`）
 - i18n ラベル（ja / en）の追加
@@ -90,6 +90,8 @@ const orderBy = opts.sort === 'score'
 - モバイル / デスクトップ共通レイアウトで左寄せ
 - a11y: `role="group"` + `aria-label={t('articles.sortLabel')}`、各ボタンに `aria-pressed={isSelected}` を付与
 
+加えて Settings → Reading（`src/pages/settings/sections/reading-section.tsx`）に、他の読書設定と同じ `RadioGroup` で「新しい順 / 古い順」を置く。値は一覧ヘッダのトグルと同じ `settings.articleSort` / `setArticleSort` を参照するため、専用の state は持たない。`categoryUnreadOnly` の直後に配置する。
+
 ユーザーが並び順を切り替えると、`getKey()` が返す SWR キーに `order=asc`（非デフォルト時のみ付与）が含まれるため、SWR は自動的に新しいキーでフェッチを開始する。`feedId / categoryId` 変更時と同様に以下もリセットする:
 
 - `autoReadIds`（auto-mark-read の一時バッファ）
@@ -100,13 +102,15 @@ const orderBy = opts.sort === 'score'
 
 ### i18n
 
-`src/lib/i18n.ts` に以下のキーを追加する（設定画面には項目を置かないため、一覧ヘッダのトグル用のみ）:
+`src/lib/i18n.ts` に以下のキーを追加する。`articles.*` は一覧ヘッダのトグルと Settings のラジオで共用し、`settings.*` は Settings の見出しと説明文に使う:
 
 | キー | ja | en |
 |---|---|---|
 | `articles.sortNewest` | 新しい順 | Newest |
 | `articles.sortOldest` | 古い順 | Oldest |
 | `articles.sortLabel` | 並び順 | Sort |（スクリーンリーダー / ツールチップ用のアクセシブルラベル）
+| `settings.articleSort` | 記事の並び順 | Article Sort Order |
+| `settings.articleSortDesc` | Inbox・フィード・カテゴリの一覧を公開日時のどちら向きで並べるかを選びます | Choose the publication-date direction for the Inbox, feed, and category lists |
 
 トグル自体はテキストのみで矢印アイコンは付けない。
 
@@ -137,6 +141,7 @@ ADR-001 の二層ストレージに従い、初回描画は localStorage の値�
 - `src/hooks/use-article-sort.test.ts` — localStorage の読み書き（`createLocalStorageHook` の既存テストと同じパターン）
 - `src/hooks/use-settings.test.ts` — `reading.article_sort` の hydration / backfill / synced setter
 - `src/components/article/article-list.test.tsx` — `order=asc` 時に SWR キーへ `order=asc` が付与され、`desc` 時は付与されないこと
+- `src/pages/settings/sections/reading-section.test.tsx` — Settings のラジオが現在値を反映し、選択で `setArticleSort` が呼ばれること
 - `server/db/articles.test.ts`（または同等の既存テスト）— `getArticles({ order: 'asc' })` で `a.published_at IS NULL, a.published_at ASC` になり、`NULLs last` が保たれること。`sort: 'score'` が指定されたときは `order` が無視されること
 
 ### Implementation Status
@@ -161,11 +166,13 @@ Frontend:
 - [x] `src/hooks/use-settings.test.ts` に hydration / synced setter / backfill のテストを追加
 - [x] `src/components/article/article-list.tsx` にトグル UI・`order` 付与ロジック・リセット effect を実装
 - [x] `src/components/article/article-list.test.tsx` にトグル表示・非表示・操作のテストを追加
+- [x] `src/pages/settings/sections/reading-section.tsx` に Settings → Reading のラジオグループを追加
+- [x] `src/pages/settings/sections/reading-section.test.tsx` を新規作成し、現在値の反映と選択時の永続化をテスト
 
 Demo / i18n:
 - [x] `src/lib/demo/demo-store.ts` に `order` 分岐を追加（NULLs last 実装）
 - [x] `src/lib/demo/mock-api.ts` で `/api/articles` ルートに `order` を受け渡し
-- [x] `src/lib/i18n.ts` に `articles.sortLabel` / `articles.sortNewest` / `articles.sortOldest` を追加
+- [x] `src/lib/i18n.ts` に `articles.sortLabel` / `articles.sortNewest` / `articles.sortOldest` / `settings.articleSort` / `settings.articleSortDesc` を追加
 - [x] `src/lib/demo/i18n.ts` は `demo.*` 専用のため変更不要（`articles.*` は本体 `i18n.ts` を共有）
 
 Docs:
@@ -183,6 +190,7 @@ Verification:
 
 - 2026-04-13: 仕様レビュー完了、実装着手可能
 - 2026-04-13: 実装完了。typecheck / lint / test / lint-docs すべて通過。worktree の `node_modules` が空だったため `npm install` を実行し、それに伴って差分が出た `package-lock.json` はリポジトリのルールに従い `git checkout` で元に戻した。
+- 2026-07-28: ブランチを当時から 65 コミット進んだ `main` に rebase。`src/lib/i18n.ts` のみコンフリクトし、上流で追加された簡体字中国語（`zh`）に合わせて新規キーへ `zh` 訳を付けて解決した。あわせて Settings → Reading にラジオグループを追加（一覧ヘッダのトグルと同じ `reading.article_sort` を共有）。typecheck / lint / test（129 files, 2116 件）/ lint-docs すべて通過。
 
 ### Key Files
 
@@ -194,11 +202,13 @@ Verification:
 | `src/hooks/use-article-sort.ts` | 新規フック |
 | `src/hooks/use-settings.ts` | hydrationMap / backfill / synced setter を追加 |
 | `src/components/article/article-list.tsx` | SWR キーに `order` を反映、トグル UI を実装、リセット effect に `order` を追加 |
+| `src/pages/settings/sections/reading-section.tsx` | Settings → Reading に並び順のラジオグループを追加 |
 | `src/lib/demo/demo-store.ts` | デモ用記事取得関数に `order` 分岐を追加 |
 | `src/lib/i18n.ts` | `articles.sortNewest` / `articles.sortOldest` / `articles.sortLabel` を ja/en で追加 |
 | `src/hooks/use-article-sort.test.ts` | 新規単体テスト |
 | `src/hooks/use-settings.test.ts` | hydration / backfill / synced setter のテスト追加 |
 | `src/components/article/article-list.test.tsx` | SWR キー生成と `order` 付与のテスト追加 |
+| `src/pages/settings/sections/reading-section.test.tsx` | 新規テスト。Settings のラジオの表示と永続化 |
 | `server/db/articles.test.ts` | `getArticles` の `order` 分岐テスト追加 |
 | `docs/spec/01_overview.md` | 本仕様書へのリンク追加（済） |
 | `docs/spec/20_api.md` | `GET /api/articles` の `order` パラメータを表に追記 |
