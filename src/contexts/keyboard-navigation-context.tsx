@@ -7,6 +7,8 @@ interface KeyboardNavigationValue {
   setArticleIds: (ids: string[]) => void
   articleUrls: Record<string, string>
   setArticleUrls: (urls: Record<string, string>) => void
+  articleListKey: string | null
+  setArticleListKey: (key: string | null) => void
   lastListUrl: string | null
   setLastListUrl: (url: string | null) => void
 }
@@ -30,6 +32,9 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
       return saved ? JSON.parse(saved) : {}
     } catch { return {} }
   })
+  const [articleListKey, setArticleListKeyState] = useState<string | null>(() => {
+    return sessionStorage.getItem('kb_article_list_key')
+  })
 
   const setLastListUrl = useCallback((url: string | null) => {
     setLastListUrlState(url)
@@ -47,6 +52,12 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
     sessionStorage.setItem('kb_article_urls', JSON.stringify(urls))
   }, [])
 
+  const setArticleListKey = useCallback((key: string | null) => {
+    setArticleListKeyState(key)
+    if (key) sessionStorage.setItem('kb_article_list_key', key)
+    else sessionStorage.removeItem('kb_article_list_key')
+  }, [])
+
   return (
     <KeyboardNavigationContext.Provider
       value={{
@@ -56,6 +67,8 @@ export function KeyboardNavigationProvider({ children }: { children: ReactNode }
         setArticleIds: updateArticleIds,
         articleUrls,
         setArticleUrls: updateArticleUrls,
+        articleListKey,
+        setArticleListKey,
         lastListUrl,
         setLastListUrl,
       }}

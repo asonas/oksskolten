@@ -83,6 +83,8 @@ export function useKeyboardNavigation(options: UseKeyboardNavigationOptions) {
             if (items.length - nextIndex <= NEAR_END_THRESHOLD && onNearEnd) {
               onNearEnd()
             }
+          } else if (onNearEnd) {
+            onNearEnd()
           }
         } else {
           const prevIndex = currentIndex - 1

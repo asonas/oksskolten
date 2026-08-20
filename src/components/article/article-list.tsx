@@ -99,6 +99,7 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
     params.set('offset', String(pageIndex * PAGE_SIZE))
     return `/api/articles?${params.toString()}`
   }
+  const articleListKey = getKey(0, null)
 
   const { data, error, size, setSize, isLoading, isValidating, mutate } = useSWRInfinite<ArticlesResponse>(
     getKey,
@@ -124,7 +125,7 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
   // ---------------------------------------------------------------------------
   // Keyboard navigation
   // ---------------------------------------------------------------------------
-  const { focusedItemId, setFocusedItemId, setArticleIds, setArticleUrls, setLastListUrl } = useKeyboardNavigationContext()
+  const { focusedItemId, setFocusedItemId, setArticleIds, setArticleUrls, setArticleListKey, setLastListUrl } = useKeyboardNavigationContext()
   const isKeyboardNavEnabled = keyboardNavigation === 'on' && !isGridLayout
 
   const articleIds = useMemo(() => articles.map(a => String(a.id)), [articles])
@@ -138,6 +139,10 @@ export const ArticleList = forwardRef<ArticleListHandle, object>(function Articl
     setArticleIds(articleIds)
     setArticleUrls(articleUrls)
   }, [articleIds, articleUrls, setArticleIds, setArticleUrls])
+
+  useEffect(() => {
+    if (articleListKey) setArticleListKey(articleListKey)
+  }, [articleListKey, setArticleListKey])
 
   useEffect(() => {
     setLastListUrl(location.pathname)
