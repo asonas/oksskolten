@@ -43,6 +43,7 @@ export interface Article {
   title: string
   url: string
   published_at: string | null
+  updated_at: string | null
   lang: string | null
   full_text: string | null
   full_text_translated: string | null

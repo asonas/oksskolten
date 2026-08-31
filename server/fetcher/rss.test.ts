@@ -61,6 +61,17 @@ const ATOM_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>`
 
+const ATOM_PUBLISHED_AND_UPDATED_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Atom Blog</title>
+  <entry>
+    <title>Updated Post</title>
+    <link rel="alternate" href="https://example.com/updated"/>
+    <published>2024-01-01T00:00:00Z</published>
+    <updated>2024-01-02T00:00:00Z</updated>
+  </entry>
+</feed>`
+
 const ATOM_SINGLE_LINK_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <title>Single Link Atom</title>
@@ -187,6 +198,18 @@ describe('fetchAndParseRss', () => {
     expect(items[0].url).toBe('https://example.com/atom-1')
   })
 
+  it('preserves Atom published and updated dates separately', async () => {
+    mockSafeFetch.mockResolvedValue(mockResponse(ATOM_PUBLISHED_AND_UPDATED_XML))
+
+    const { items } = await fetchAndParseRss({
+      id: 1, name: 'test', url: 'https://example.com',
+      rss_url: 'https://example.com/atom',
+    } as any)
+
+    expect(items[0].published_at).toBe('2024-01-01T00:00:00.000Z')
+    expect(items[0].updated_at).toBe('2024-01-02T00:00:00.000Z')
+  })
+
   it('falls back to fast-xml-parser when feedsmith fails', async () => {
     const rssXml = `<?xml version="1.0"?>
 <rss version="2.0">
@@ -211,6 +234,19 @@ describe('fetchAndParseRss', () => {
     expect(items).toHaveLength(1)
     expect(items[0].title).toBe('FXP Item')
     expect(items[0].url).toBe('https://example.com/fxp')
+  })
+
+  it('preserves Atom published and updated dates in the fallback parser', async () => {
+    feedsmithShouldFail = true
+    mockSafeFetch.mockResolvedValue(mockResponse(ATOM_PUBLISHED_AND_UPDATED_XML))
+
+    const { items } = await fetchAndParseRss({
+      id: 1, name: 'test', url: 'https://example.com',
+      rss_url: 'https://example.com/atom',
+    } as any)
+
+    expect(items[0].published_at).toBe('2024-01-01T00:00:00.000Z')
+    expect(items[0].updated_at).toBe('2024-01-02T00:00:00.000Z')
   })
 
   it('handles single RSS item (not array)', async () => {

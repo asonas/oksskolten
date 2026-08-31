@@ -2,7 +2,7 @@ import {
   getEnabledFeeds,
   countStaleArticlesByFeed,
   getArticlesNeedingRefresh,
-  getExistingArticleUrls,
+  getExistingArticlesByUrl,
   getRetryArticles,
   getRetryStats,
   insertArticle,
@@ -183,8 +183,21 @@ interface NewArticle {
   title: string
   url: string
   published_at: string | null
+  updated_at?: string | null
   requires_js_challenge?: boolean
   /** Excerpt from listing page (CSS Bridge content_selector), used as fullText fallback */
+  excerpt?: string
+}
+
+interface UpdatedArticle {
+  kind: 'update'
+  article: Pick<Article, 'id' | 'url' | 'updated_at'>
+  feed_id: number
+  title: string
+  url: string
+  published_at: string | null
+  updated_at: string
+  requires_js_challenge?: boolean
   excerpt?: string
 }
 
@@ -193,15 +206,58 @@ interface RetryArticle {
   article: Article
 }
 
-type ArticleTask = NewArticle | RetryArticle
+type FeedArticleTask = NewArticle | UpdatedArticle
+type ArticleTask = FeedArticleTask | RetryArticle
+
+function hasNewerUpdate(item: RssItem, existing: Pick<Article, 'updated_at'>): item is RssItem & { updated_at: string } {
+  if (!item.updated_at) return false
+  if (!existing.updated_at) return true
+  return new Date(item.updated_at).getTime() > new Date(existing.updated_at).getTime()
+}
+
+function buildFeedArticleTasks(feed: Feed, rssItems: RssItem[]): FeedArticleTask[] {
+  const existing = getExistingArticlesByUrl(rssItems.map(item => item.url))
+  const tasks: FeedArticleTask[] = []
+
+  for (const item of rssItems) {
+    const existingArticle = existing.get(normalizeUrl(item.url))
+    if (!existingArticle) {
+      tasks.push({
+        kind: 'new',
+        feed_id: feed.id,
+        title: item.title,
+        url: item.url,
+        published_at: item.published_at,
+        updated_at: item.updated_at,
+        requires_js_challenge: !!feed.requires_js_challenge,
+        excerpt: item.excerpt,
+      })
+    } else if (hasNewerUpdate(item, existingArticle)) {
+      tasks.push({
+        kind: 'update',
+        article: existingArticle,
+        feed_id: feed.id,
+        title: item.title,
+        url: item.url,
+        published_at: item.published_at,
+        updated_at: item.updated_at,
+        requires_js_challenge: !!feed.requires_js_challenge,
+        excerpt: item.excerpt,
+      })
+    }
+  }
+
+  return tasks
+}
 
 /** Returns true if the retry article still has an error after processing. */
 async function processArticle(task: ArticleTask): Promise<boolean> {
-  const articleUrl = task.kind === 'new' ? task.url : task.article.url
+  const articleUrl = task.kind === 'retry' ? task.article.url : task.url
+  const isFeedArticle = task.kind === 'new' || task.kind === 'update'
 
   const content = await fetchArticleContent(articleUrl, {
-    requiresJsChallenge: task.kind === 'new' ? task.requires_js_challenge : undefined,
-    listingExcerpt: task.kind === 'new' ? task.excerpt : undefined,
+    requiresJsChallenge: isFeedArticle ? task.requires_js_challenge : undefined,
+    listingExcerpt: isFeedArticle ? task.excerpt : undefined,
     existingArticle: task.kind === 'retry' ? task.article : undefined,
   })
 
@@ -215,6 +271,7 @@ async function processArticle(task: ArticleTask): Promise<boolean> {
         title: task.title,
         url: task.url,
         published_at: task.published_at,
+        updated_at: task.updated_at,
         lang: effectiveLang,
         full_text: content.fullText,
         full_text_translated: null,
@@ -230,6 +287,28 @@ async function processArticle(task: ArticleTask): Promise<boolean> {
       if (!msg.includes('UNIQUE constraint failed')) {
         log.warn(`insertArticle failed for ${task.url}: ${msg}`)
       }
+    }
+  } else if (task.kind === 'update') {
+    if (content.fullText !== null) {
+      updateArticleContent(task.article.id, {
+        title: task.title,
+        published_at: task.published_at,
+        updated_at: task.updated_at,
+        lang: effectiveLang,
+        full_text: content.fullText,
+        full_text_translated: null,
+        translated_lang: null,
+        summary: null,
+        excerpt: content.excerpt,
+        og_image: content.ogImage,
+        last_error: content.lastError,
+      })
+    } else {
+      updateArticleContent(task.article.id, {
+        title: task.title,
+        published_at: task.published_at,
+        last_error: content.lastError,
+      })
     }
   } else {
     updateArticleContent(task.article.id, {
@@ -289,24 +368,12 @@ export async function fetchSingleFeed(
     updateFeedSchedule(feed.id, sqliteFuture(interval), interval)
   }
 
-  const urls = rssResult.items.map(i => i.url)
-  const existing = getExistingArticleUrls(urls)
   refreshStaleArticles(feed.id, rssResult.items)
 
-  const tasks: ArticleTask[] = rssResult.items
-    .filter(item => !existing.has(item.url))
-    .map(item => ({
-      kind: 'new' as const,
-      feed_id: feed.id,
-      title: item.title,
-      url: item.url,
-      published_at: item.published_at,
-      requires_js_challenge: !!feed.requires_js_challenge,
-      excerpt: item.excerpt,
-    }))
+  const tasks: ArticleTask[] = buildFeedArticleTasks(feed, rssResult.items)
 
   if (tasks.length === 0) {
-    log.info(`Feed ${feed.name}: no new articles`)
+    log.info(`Feed ${feed.name}: no new or updated articles`)
     return
   }
 
@@ -323,7 +390,7 @@ export async function fetchSingleFeed(
       semaphore.run(async () => {
         try {
           await processArticle(task)
-          if (task.kind === 'new') {
+          if (task.kind !== 'retry') {
             fetched++
             const doneEvent: FetchProgressEvent = { type: 'article-done', feed_id: feed.id, fetched, total }
             emitProgress(doneEvent)
@@ -331,7 +398,7 @@ export async function fetchSingleFeed(
           }
         } catch (err) {
           log.error('Article error:', err)
-          if (task.kind === 'new') {
+          if (task.kind !== 'retry') {
             fetched++
             const doneEvent: FetchProgressEvent = { type: 'article-done', feed_id: feed.id, fetched, total }
             emitProgress(doneEvent)
@@ -360,9 +427,9 @@ export async function fetchAllFeeds(
 
   const allTasks: ArticleTask[] = []
 
-  // Phase A: Fetch RSS for each feed and collect new articles (per-feed limit)
-  // Track new article counts per feed for progress events
-  const feedNewCounts = new Map<number, number>()
+  // Phase A: Fetch RSS for each feed and collect feed article tasks.
+  // Track per-feed task counts for progress events.
+  const feedArticleCounts = new Map<number, number>()
 
   await Promise.all(
     feeds.map(feed =>
@@ -377,7 +444,7 @@ export async function fetchAllFeeds(
             const interval = feed.check_interval ?? DEFAULT_INTERVAL
             updateFeedSchedule(feed.id, sqliteFuture(interval), interval)
             log.info(`Feed ${feed.name}: not modified (304)`)
-            feedNewCounts.set(feed.id, 0)
+            feedArticleCounts.set(feed.id, 0)
             return
           }
 
@@ -388,24 +455,12 @@ export async function fetchAllFeeds(
             updateFeedSchedule(feed.id, sqliteFuture(interval), interval)
           }
 
-          const urls = rssResult.items.map(i => i.url)
-          const existing = getExistingArticleUrls(urls)
           refreshStaleArticles(feed.id, rssResult.items)
 
-          const newItems: ArticleTask[] = rssResult.items
-            .filter(item => !existing.has(item.url))
-            .map(item => ({
-              kind: 'new' as const,
-              feed_id: feed.id,
-              title: item.title,
-              url: item.url,
-              published_at: item.published_at,
-              requires_js_challenge: !!feed.requires_js_challenge,
-              excerpt: item.excerpt,
-            }))
+          const feedTasks: ArticleTask[] = buildFeedArticleTasks(feed, rssResult.items)
 
-          allTasks.push(...newItems)
-          feedNewCounts.set(feed.id, newItems.length)
+          allTasks.push(...feedTasks)
+          feedArticleCounts.set(feed.id, feedTasks.length)
         } catch (err) {
           if (err instanceof RateLimitError) {
             log.warn(`Feed ${feed.name}: ${err.message}`)
@@ -437,13 +492,14 @@ export async function fetchAllFeeds(
   }
 
   const newCount = allTasks.filter(t => t.kind === 'new').length
+  const updateCount = allTasks.filter(t => t.kind === 'update').length
   const retryCount = allTasks.filter(t => t.kind === 'retry').length
   log.info(
-    `Processing ${allTasks.length} articles (${newCount} new, ${retryCount} retry)`,
+    `Processing ${allTasks.length} articles (${newCount} new, ${updateCount} update, ${retryCount} retry)`,
   )
 
-  // Emit feed-articles-found for each feed with new articles
-  for (const [feedId, count] of feedNewCounts) {
+  // Emit feed-articles-found for each feed with work to process.
+  for (const [feedId, count] of feedArticleCounts) {
     if (count > 0) {
       const event: FetchProgressEvent = { type: 'feed-articles-found', feed_id: feedId, total: count }
       emitProgress(event)
@@ -452,7 +508,7 @@ export async function fetchAllFeeds(
   }
 
   // Phase C: Process each article with semaphore
-  // Per-feed counters for progress (only count 'new' articles)
+  // Per-feed counters for progress (feed articles, excluding retries)
   const feedFetchedCounts = new Map<number, number>()
   const processingSemaphore = new Semaphore(CONCURRENCY)
   await Promise.all(
@@ -478,12 +534,12 @@ export async function fetchAllFeeds(
             retry_count: (task.article.retry_count ?? 0) + 1,
           })
         }
-        if (task.kind === 'new') {
+        if (task.kind !== 'retry') {
           const feedId = task.feed_id
           const prev = feedFetchedCounts.get(feedId) ?? 0
           const fetched = prev + 1
           feedFetchedCounts.set(feedId, fetched)
-          const total = feedNewCounts.get(feedId) ?? 0
+          const total = feedArticleCounts.get(feedId) ?? 0
           const event: FetchProgressEvent = { type: 'article-done', feed_id: feedId, fetched, total }
           emitProgress(event)
           onProgress?.(event)
@@ -493,7 +549,7 @@ export async function fetchAllFeeds(
   )
 
   // Emit feed-complete for each feed
-  for (const [feedId, count] of feedNewCounts) {
+  for (const [feedId, count] of feedArticleCounts) {
     if (count > 0) {
       markFeedDone(feedId)
       const event: FetchProgressEvent = { type: 'feed-complete', feed_id: feedId }

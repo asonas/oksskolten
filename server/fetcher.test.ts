@@ -1,6 +1,15 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { setupTestDb } from './__tests__/helpers/testDb.js'
-import { createFeed, insertArticle, getArticleByUrl, getFeedById, upsertSetting } from './db.js'
+import {
+  createFeed,
+  insertArticle,
+  getArticleByUrl,
+  getFeedById,
+  markArticleBookmarked,
+  markArticleLiked,
+  markArticleSeen,
+  upsertSetting,
+} from './db.js'
 import type { Feed } from './db.js'
 
 // --- Anthropic mock ---
@@ -80,13 +89,14 @@ function rss20Xml(title: string, items: { title: string; link: string; pubDate?:
 </rss>`
 }
 
-function atomXml(title: string, entries: { title: string; href: string; published?: string }[]): string {
+function atomXml(title: string, entries: { title: string; href: string; published?: string; updated?: string }[]): string {
   const entriesXml = entries
     .map(
       e => `<entry>
       <title>${e.title}</title>
       <link rel="alternate" href="${e.href}" />
       ${e.published ? `<published>${e.published}</published>` : ''}
+      ${e.updated ? `<updated>${e.updated}</updated>` : ''}
     </entry>`,
     )
     .join('\n')
@@ -518,7 +528,7 @@ describe('fetchSingleFeed', () => {
     expect(article!.title).toBe('Entry 1')
   })
 
-  it('skips existing articles', async () => {
+  it('skips existing RSS articles without an update timestamp', async () => {
     const feed = seedFeed()
     // Pre-insert an article
     insertArticle({
@@ -546,6 +556,108 @@ describe('fetchSingleFeed', () => {
     const fetchedUrls = mockFetch.mock.calls.map((c: unknown[]) => (c[0] as string).toString())
     expect(fetchedUrls).toContain('https://example.com/new')
     expect(fetchedUrls.filter((u: string) => u === 'https://example.com/existing')).toHaveLength(0)
+  })
+
+  it('updates an existing Atom article when its update timestamp advances', async () => {
+    const feed = seedFeed()
+    const published = '2024-01-01T00:00:00Z'
+    const initialUpdated = '2024-01-02T00:00:00Z'
+    const completedUpdated = '2024-01-03T00:00:00Z'
+    const initialFeed = atomXml('Atom Blog', [{
+      title: 'Draft',
+      href: 'https://example.com/updated',
+      published,
+      updated: initialUpdated,
+    }])
+    const completedFeed = atomXml('Atom Blog', [{
+      title: 'Complete',
+      href: 'https://example.com/updated',
+      published,
+      updated: completedUpdated,
+    }])
+    const initialHtml = articleHtml({ title: 'Draft', body: '<p>Draft body content.</p>'.repeat(10) })
+    const completedHtml = articleHtml({ title: 'Complete', body: '<p>Complete body content.</p>'.repeat(10) })
+    let rssFetchCount = 0
+
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = url.toString()
+      if (u === feed.rss_url) {
+        rssFetchCount++
+        const xml = rssFetchCount === 1 ? initialFeed : completedFeed
+        return Promise.resolve(mockResponse(xml, { headers: { 'content-type': 'application/atom+xml' } }))
+      }
+      return Promise.resolve(mockResponse(rssFetchCount === 1 ? initialHtml : completedHtml))
+    })
+
+    await fetchSingleFeed(feed)
+    const initialArticle = getArticleByUrl('https://example.com/updated')
+    expect(initialArticle).toBeDefined()
+    const { getDb } = await import('./db.js')
+    const initialRow = getDb().prepare('SELECT published_at, updated_at FROM articles WHERE id = ?').get(initialArticle!.id) as { published_at: string; updated_at: string }
+    expect(initialRow.published_at).toBe('2024-01-01T00:00:00.000Z')
+    expect(initialRow.updated_at).toBe('2024-01-02T00:00:00.000Z')
+    markArticleSeen(initialArticle!.id, true)
+    markArticleLiked(initialArticle!.id, true)
+    markArticleBookmarked(initialArticle!.id, true)
+
+    getDb().prepare(
+      'UPDATE articles SET summary = ?, full_text_translated = ?, translated_lang = ? WHERE id = ?',
+    ).run('Old summary', 'Old translation', 'en', initialArticle!.id)
+
+    await fetchSingleFeed(feed)
+
+    const row = getDb().prepare(`
+      SELECT COUNT(*) AS count, title, published_at, updated_at, full_text,
+             seen_at, liked_at, bookmarked_at, summary, full_text_translated, translated_lang
+      FROM articles WHERE url = ?
+    `).get('https://example.com/updated') as {
+      count: number
+      title: string
+      published_at: string
+      updated_at: string
+      full_text: string
+      seen_at: string | null
+      liked_at: string | null
+      bookmarked_at: string | null
+      summary: string | null
+      full_text_translated: string | null
+      translated_lang: string | null
+    }
+
+    expect(row.count).toBe(1)
+    expect(row.title).toBe('Complete')
+    expect(row.published_at).toBe('2024-01-01T00:00:00.000Z')
+    expect(row.updated_at).toBe('2024-01-03T00:00:00.000Z')
+    expect(row.full_text).toContain('Complete body content.')
+    expect(row.seen_at).not.toBeNull()
+    expect(row.liked_at).not.toBeNull()
+    expect(row.bookmarked_at).not.toBeNull()
+    expect(row.summary).toBeNull()
+    expect(row.full_text_translated).toBeNull()
+    expect(row.translated_lang).toBeNull()
+  })
+
+  it('does not refetch an existing Atom article when its update timestamp is unchanged', async () => {
+    const feed = seedFeed()
+    const xml = atomXml('Atom Blog', [{
+      title: 'Stable',
+      href: 'https://example.com/stable',
+      published: '2024-01-01T00:00:00Z',
+      updated: '2024-01-02T00:00:00Z',
+    }])
+    const html = articleHtml({ title: 'Stable' })
+
+    mockFetch.mockImplementation((url: string | URL) => {
+      const u = url.toString()
+      if (u === feed.rss_url) return Promise.resolve(mockResponse(xml, { headers: { 'content-type': 'application/atom+xml' } }))
+      return Promise.resolve(mockResponse(html))
+    })
+
+    await fetchSingleFeed(feed)
+    await fetchSingleFeed(feed)
+
+    const articleFetches = mockFetch.mock.calls.filter((call: unknown[]) => call[0] === 'https://example.com/stable')
+    expect(articleFetches).toHaveLength(1)
   })
 
   it('extracts og:image', async () => {

@@ -19,6 +19,7 @@ export interface RssItem {
   title: string
   url: string
   published_at: string | null
+  updated_at?: string | null
   excerpt?: string
 }
 
@@ -291,12 +292,14 @@ async function parseRssXml(xml: string): Promise<RssItem[]> {
           }
           const rawExcerpt = item.content_encoded || item['content:encoded'] || item.content || item.description || item.summary
           const excerpt = typeof rawExcerpt === 'string' ? rawExcerpt : (rawExcerpt && typeof rawExcerpt === 'object' && 'value' in rawExcerpt ? String((rawExcerpt as Record<string, unknown>).value) : undefined)
+          const updatedAt = normalizeDate(item.updated as string | undefined)
           return {
             title: (item.title as string) || 'Untitled',
             url: (url || item.id) as string,
             published_at: normalizeDate(
               (item.published || item.updated || item.date || item.pubDate || (item.dc as Record<string, unknown>)?.date) as string | undefined,
             ),
+            updated_at: updatedAt,
             ...(excerpt ? { excerpt } : {}),
           }
         })
@@ -347,12 +350,13 @@ async function parseRssXml(xml: string): Promise<RssItem[]> {
         const id = entry.id as string | undefined
         const effectiveUrl = link || (id && /^https?:\/\//i.test(id) ? id : '') || ''
         const excerpt = textOf(entry.content) || textOf(entry.summary)
+        const publishedAt = normalizeDate(entry.published as string | undefined)
+        const updatedAt = normalizeDate(entry.updated as string | undefined)
         return {
           title: textOf(entry.title) || 'Untitled',
           url: effectiveUrl,
-          published_at: normalizeDate(
-            (entry.published || entry.updated) as string | undefined,
-          ),
+          published_at: publishedAt || updatedAt,
+          updated_at: updatedAt,
           ...(excerpt ? { excerpt } : {}),
         }
       })

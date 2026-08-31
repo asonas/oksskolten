@@ -367,6 +367,7 @@ export function insertArticle(data: {
   title: string
   url: string
   published_at: string | null
+  updated_at?: string | null
   lang?: string | null
   full_text?: string | null
   full_text_translated?: string | null
@@ -377,13 +378,14 @@ export function insertArticle(data: {
   last_error?: string | null
 }): number {
   const info = runNamed(`
-    INSERT INTO articles (feed_id, category_id, title, url, published_at, lang, full_text, full_text_translated, translated_lang, summary, excerpt, og_image, last_error)
-    VALUES (@feed_id, (SELECT category_id FROM feeds WHERE id = @feed_id), @title, @url, @published_at, @lang, @full_text, @full_text_translated, @translated_lang, @summary, @excerpt, @og_image, @last_error)
+    INSERT INTO articles (feed_id, category_id, title, url, published_at, updated_at, lang, full_text, full_text_translated, translated_lang, summary, excerpt, og_image, last_error)
+    VALUES (@feed_id, (SELECT category_id FROM feeds WHERE id = @feed_id), @title, @url, @published_at, @updated_at, @lang, @full_text, @full_text_translated, @translated_lang, @summary, @excerpt, @og_image, @last_error)
   `, {
     feed_id: data.feed_id,
     title: data.title,
     url: data.url,
     published_at: data.published_at,
+    updated_at: data.updated_at ?? null,
     lang: data.lang ?? null,
     full_text: data.full_text ?? null,
     full_text_translated: data.full_text_translated ?? null,
@@ -412,6 +414,9 @@ export function markArticleRefreshAttempted(articleId: number, when: string): vo
 export function updateArticleContent(
   articleId: number,
   data: {
+    title?: string
+    published_at?: string | null
+    updated_at?: string | null
     lang?: string | null
     full_text?: string | null
     full_text_translated?: string | null
@@ -494,8 +499,8 @@ export function countStaleArticlesByFeed(feedId: number, minLength: number): num
   return row.n
 }
 
-export function getExistingArticleUrls(urls: string[]): Set<string> {
-  if (urls.length === 0) return new Set()
+export function getExistingArticlesByUrl(urls: string[]): Map<string, Pick<Article, 'id' | 'url' | 'updated_at'>> {
+  if (urls.length === 0) return new Map()
   const normalized = urls.map(normalizeUrl)
 
   // Query both protocol variants so a feed item that arrives as https://
@@ -517,17 +522,25 @@ export function getExistingArticleUrls(urls: string[]): Set<string> {
   const expandedList = [...expanded]
   const placeholders = expandedList.map(() => '?').join(',')
   const rows = getDb().prepare(
-    `SELECT url FROM articles WHERE url IN (${placeholders})`,
-  ).all(...expandedList) as { url: string }[]
+    `SELECT id, url, updated_at FROM articles WHERE url IN (${placeholders})`,
+  ).all(...expandedList) as Pick<Article, 'id' | 'url' | 'updated_at'>[]
 
-  const dbUrls = new Set(rows.map(r => r.url))
-  const existing = new Set<string>()
+  const dbArticles = new Map(rows.map(row => [row.url, row]))
+  const existing = new Map<string, Pick<Article, 'id' | 'url' | 'updated_at'>>()
   for (const u of normalized) {
-    if (dbUrls.has(u)) { existing.add(u); continue }
-    if (u.startsWith('https://') && dbUrls.has('http://' + u.slice(8))) existing.add(u)
-    else if (u.startsWith('http://') && dbUrls.has('https://' + u.slice(7))) existing.add(u)
+    const alternate = u.startsWith('https://')
+      ? 'http://' + u.slice(8)
+      : u.startsWith('http://')
+        ? 'https://' + u.slice(7)
+        : null
+    const article = dbArticles.get(u) ?? (alternate ? dbArticles.get(alternate) : undefined)
+    if (article) existing.set(u, article)
   }
   return existing
+}
+
+export function getExistingArticleUrls(urls: string[]): Set<string> {
+  return new Set(getExistingArticlesByUrl(urls).keys())
 }
 
 // Backoff deadline: datetime when the article becomes eligible for retry again.
