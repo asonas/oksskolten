@@ -82,10 +82,38 @@ describe('ArticleZapNavigation', () => {
     fireKey('j')
 
     await waitFor(() => {
-      expect(mockFetcher).toHaveBeenCalledWith('/api/articles?unread=1&limit=20&offset=0')
+      expect(mockFetcher).toHaveBeenCalledWith('/api/articles?unread=1&limit=20&offset=20')
     })
     await waitFor(() => {
       expect(screen.getByTestId('article-ids').textContent).toBe('1,2,3')
+    })
+  })
+
+  it('requests the next page after the retained articles', async () => {
+    const ids = Array.from({ length: 40 }, (_, i) => String(i + 1))
+    const urls = Object.fromEntries(ids.map(id => [id, `https://example.com/${id}`]))
+    sessionStorage.setItem('kb_article_ids', JSON.stringify(ids))
+    sessionStorage.setItem('kb_article_urls', JSON.stringify(urls))
+    mockFetcher.mockResolvedValue({
+      articles: [makeArticle(41)],
+      total: 41,
+      has_more: false,
+    })
+
+    render(
+      <KeyboardNavigationProvider>
+        <ArticleZapNavigation currentArticleId="40" />
+        <ArticleIdsProbe />
+      </KeyboardNavigationProvider>,
+    )
+
+    fireKey('j')
+
+    await waitFor(() => {
+      expect(mockFetcher).toHaveBeenCalledWith('/api/articles?unread=1&limit=20&offset=40')
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('article-ids').textContent).toContain('41')
     })
   })
 })

@@ -19,6 +19,35 @@ interface ArticleListResponse {
   has_more: boolean
 }
 
+const DEFAULT_PAGE_SIZE = 20
+
+function withOffset(listKey: string, offset: number): string {
+  const queryStart = listKey.indexOf('?')
+  const path = queryStart === -1 ? listKey : listKey.slice(0, queryStart)
+  const query = queryStart === -1 ? '' : listKey.slice(queryStart + 1)
+  const params = new URLSearchParams(query)
+  params.set('offset', String(offset))
+  return `${path}?${params.toString()}`
+}
+
+function paramsFrom(listKey: string): URLSearchParams {
+  const queryStart = listKey.indexOf('?')
+  return new URLSearchParams(queryStart === -1 ? '' : listKey.slice(queryStart + 1))
+}
+
+function pageSizeFrom(listKey: string): number {
+  const pageSize = Number(paramsFrom(listKey).get('limit'))
+  return Number.isInteger(pageSize) && pageSize > 0 ? pageSize : DEFAULT_PAGE_SIZE
+}
+
+function nextOffsetFrom(listKey: string, articleCount: number): number {
+  const params = paramsFrom(listKey)
+  const pageSize = pageSizeFrom(listKey)
+  const baseOffset = Number(params.get('offset')) || 0
+  const loadedPages = Math.max(1, Math.ceil(articleCount / pageSize))
+  return baseOffset + loadedPages * pageSize
+}
+
 export function ArticleZapNavigation({ currentArticleId, onBookmarkToggle, onOpenExternal }: ArticleZapNavigationProps) {
   const navigate = useNavigate()
   const {
@@ -38,18 +67,23 @@ export function ArticleZapNavigation({ currentArticleId, onBookmarkToggle, onOpe
   articleUrlsRef.current = articleUrls
   const loadingRef = useRef(false)
   const hasMoreRef = useRef(true)
+  const nextOffsetRef = useRef(articleListKey ? nextOffsetFrom(articleListKey, articleIds.length) : 0)
 
   useEffect(() => {
     hasMoreRef.current = true
+    nextOffsetRef.current = articleListKey ? nextOffsetFrom(articleListKey, articleIdsRef.current.length) : 0
   }, [articleListKey])
 
   const loadMore = useCallback(() => {
     if (!articleListKey || loadingRef.current || !hasMoreRef.current) return
 
     loadingRef.current = true
-    void fetcher(articleListKey)
+    const pageSize = pageSizeFrom(articleListKey)
+    const nextPageUrl = withOffset(articleListKey, nextOffsetRef.current)
+    void fetcher(nextPageUrl)
       .then((response: ArticleListResponse) => {
         hasMoreRef.current = response.has_more
+        nextOffsetRef.current += pageSize
         const knownIds = new Set(articleIdsRef.current)
         const newArticles = response.articles.filter(article => !knownIds.has(String(article.id)))
         if (newArticles.length === 0) return
